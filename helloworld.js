@@ -63,6 +63,7 @@ io.sockets.on('connection', function (socket) {
 			if(account != null){
 				var name = account["username"];
 				io.sockets.emit('message', name+' has disconnected');
+				//TODO tell opponent and update game state to indicate d/c
 			}
 			cur_players_count = cur_players_count - 1;
 		  io.sockets.emit('status', cur_players_count.toString()+' players online');
@@ -85,8 +86,8 @@ function pay_attention(socket, account){
 			match_make();
 		}
 		socket.emit('new_ladder_game', 'starting search, lfg, socket: '+socket.id.toString());
-		io.sockets.socket(socket.id).emit('message', 'derp, socket finding works ');
-		io.sockets.socket(accounts[account["email"]]["socket_id"]).emit('message', 'derp, socket finding works from the variable too');
+		// io.sockets.socket(socket.id).emit('message', 'derp, socket finding works ');
+		// io.sockets.socket(accounts[account["email"]]["socket_id"]).emit('message', 'derp, socket finding works from the variable too');
 	});	
 }
 function S4() {
@@ -102,13 +103,7 @@ function make_game(player1, player2){
 		"player2":{"id":player2["email"], "total":0},
 		"id":guid(),
 		"active_player":"player1",
-		"results_this_turn":[]//,
-		// "get_active_player":get_active_player,
-		// "get_other_player":get_other_player,
-		// "start":start,
-		// "roll":roll,
-		// "hold":hold,
-		// "between_turn":between_turn
+		"results_this_turn":[]
 	};
 	add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
 	add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
@@ -120,6 +115,9 @@ function add_game_listeners_to_socket(socket_id, other_socket_id, no){
 	other_socket = io.sockets.socket(other_socket_id);
 	//this var is never used, consider deleting
 	socket.set('player_no', no);
+	socket.on('herp', function(data){
+		socket.emit('message', 'derp');
+	});
 	socket.on('roll', function(game_id){
 		//maybe check if this signal is coming from the active player
 		//var the_roll = active_games[game_id]["roll"]();
@@ -127,9 +125,15 @@ function add_game_listeners_to_socket(socket_id, other_socket_id, no){
 		the_roll['game_id'] = game_id;
 		//remember to update ui client-side, updating things like results this turn where necessary
 		the_roll['roller'] = true;
+		the_roll['note1'] = 'you are the roller';
 		socket.emit('roll', the_roll);
+		socket.emit('message', the_roll);
+		console.log('1st emit sent to roller ?='+(the_roll['roller'] == true).toString()+' at socket id: '+socket.id.toString());
+		
 		the_roll['roller'] = false;
+		the_roll['note2'] = 'you are not the roller';
 		other_socket.emit('roll', the_roll);
+		console.log('2nd emit sent to roller ?='+(the_roll['roller'] == true).toString()+' at socket id: '+socket.id.toString());
 		if(the_roll["bust"] == false){
 	    active_games[game_id]["results_this_turn"].push(the_roll["first"] + the_roll["second"]);
     }else if(the_roll["bust"] == true){
@@ -153,9 +157,10 @@ function between_turn(socket, other_socket, game_id, player_no){
     active_games[game_id]['winner'] = active_player;
     socket.emit('won', game_id);
     other_socket.emit('lost', game_id);
-
 	}else{
     //no winner yet
+    //tell the current player to start his t
+
     socket.emit('end_turn', game_id);
     other_socket.emit('start_turn', game_id);
 
@@ -213,11 +218,13 @@ function match_make(){
 		//note: splice returns an array 
 		var player1 = players_lfg.splice(0, 1)[0];
 		var player2 = players_lfg.splice(0, 1)[0];
+		console.log(player1);
+		console.log(player2);
 		var game = make_game(player1, player2);
 		// console.log(player1);
 		// console.log(player2);
-		io.sockets.socket(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponent_name":player2["username"]});
-		io.sockets.socket(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponent_name":player1["username"]});
+		io.sockets.socket(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player2["username"]});
+		io.sockets.socket(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player1["username"]});
 		//socket1 socket2 game_id, starting_player
 		active_games[game['id']] = game;
 		start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
