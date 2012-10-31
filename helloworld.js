@@ -28,6 +28,9 @@ var active_games = {};
 
 io.sockets.on('connection', function (socket) {
 	console.log('connection initiated!');
+	socket.on('herp', function(derp){
+		socket.emit('message', derp);
+	});
   cur_players_count = cur_players_count + 1;
   io.sockets.emit('status', cur_players_count.toString()+' players online');
   socket.on('log_in', function(data){
@@ -115,8 +118,8 @@ function add_game_listeners_to_socket(socket_id, other_socket_id, no){
 	other_socket = io.sockets.socket(other_socket_id);
 	//this var is never used, consider deleting
 	socket.set('player_no', no);
-	socket.on('herp', function(data){
-		socket.emit('message', 'derp');
+	socket.on('derp', function(derp){
+		socket.emit('message', derp);
 	});
 	socket.on('roll', function(game_id){
 		//maybe check if this signal is coming from the active player
