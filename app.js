@@ -8,11 +8,13 @@ if(process.env.NODE_ENV !== "production"){
 var fs = require('fs')
 var app = require('express')();
 var server = require('http').Server(app);
+console.log('GOOD SOCKET.IO IMPORT')
 var io = require('socket.io')(server);
 var make_redis_client = require('./make_redis_client')
 var session_client = make_redis_client(7)
 var redis_client = make_redis_client(8)
 var cookieParser = require('cookie-parser');
+console.log('GOOD HANDSHAKE SOCKET.IO IMPORT')
 var socketHandshake = require('socket.io-handshake');
 
 var session = require('express-session');
