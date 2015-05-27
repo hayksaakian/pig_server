@@ -1,7 +1,9 @@
 var PORT = process.env.PORT || 4000;
 
-var dotenv = require('dotenv')
-dotenv.load()
+if(process.env.NODE_ENV !== "production"){
+  var dotenv = require('dotenv')
+  dotenv.load()  
+}
 
 var fs = require('fs')
 var app = require('express')();
