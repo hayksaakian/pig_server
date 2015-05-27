@@ -9,8 +9,9 @@ var fs = require('fs')
 var app = require('express')();
 var server = require('http').Server(app);
 console.log('STARTED SOCKET.IO IMPORT')
-var io = require('socket.io')(server);
+var socketio = require('socket.io')
 console.log('GOOD SOCKET.IO IMPORT')
+var io = socketio(server);
 var make_redis_client = require('./make_redis_client')
 var session_client = make_redis_client(7)
 var redis_client = make_redis_client(8)
