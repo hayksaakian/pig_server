@@ -94,7 +94,7 @@ io.on('connection', function (socket) {
   socket.on('herp', function(derp){
     socket.emit('derp', derp);
   });
-  socket.emit('roomname', 'lobby')
+  socket.emit('roomname', 'global chat')
 
   io.emit('status', io.sockets.sockets.length.toString()+' players online');
 
@@ -110,12 +110,17 @@ io.on('connection', function (socket) {
     });
   }
   socket.on('send_message', function(data){
-    console.log(data)
-    if(data && data['user']){
-      var msg = data['user']['name']+": "+data['message']
-      console.log(msg)
-      io.emit('message', msg)
+    // validate contents of message
+    if(!data || !data['user'] || !data['message'] || !data['roomname']){
+      console.log('malformed message', data)
+      return
     }
+    // validate target room
+    if (!io.sockets.adapter.rooms[data['roomname']] || !io.sockets.adapter.rooms[data['roomname']][data['user']['socket_id']]) {
+      console.log('malformed message', data)
+      return
+    }
+    io.to(data['roomname']).emit('message', data)      
   })
 
   //tell everyone when this player disconnects
@@ -133,20 +138,32 @@ io.on('connection', function (socket) {
     // });
   });
 });
- 
+
+function syncMatchmakers () {
+  io.emit('status', countMatchMaking()+" in matchmaking")
+  var in_mm = Object.keys(io.sockets.adapter.rooms['matchmaking'])
+  console.log(in_mm)
+  var users = in_mm.map(function (socketId){
+    return io.sockets.connected[socketId].handshake.session.user
+  })
+  console.log(users)
+  io.to('matchmaking').emit('matchmaking_list', users)
+}
+
 function pay_attention(socket){
-  io.emit('message', socket.handshake.session.user["name"]+' connected!');
+  io.emit('server_broadcast', socket.handshake.session.user["name"]+' connected!');
   // socket.join('matchmaking')
   // socket.on('new_ladder_game', function(data){
     //do something here, maybe create a persisted game
     //do match making
     socket.join('matchmaking')
     socket.emit('roomname', 'matchmaking')
-    io.emit('status', countMatchMaking()+" in matchmaking")
+
+    syncMatchmakers()
 
     if(!isMatchmaking){
       console.log("Queued on matchmaking server!")
-      // match_make();
+      match_make();
     }
     socket.emit('new_ladder_game', 'starting search, lfg, socket: '+socket.id.toString());
     // io.sockets.socket(socket.id).emit('message', 'derp, socket finding works ');
@@ -160,122 +177,148 @@ function guid() {
   return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
 }
 
-function make_game(player1, player2){
-  var g = {
-    "player1":{"id":player1["email"], "total":0},
-    "player2":{"id":player2["email"], "total":0},
-    "id":guid(),
-    "active_player":"player1",
-    "results_this_turn":[]
-  };
-  add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
-  add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
-  return g;
+var Game = function (player1, player2){
+  this.player1 = player1
+  this.player2 = player2
+  this.totals = {}
+  this.totals[this.player1.id] = 0
+  this.totals[this.player2.id] = 0
+  this.id = guid()
+  this.active_player = player1
+  this.results_this_turn = []
+
+  active_games[this.id] = this
+  // refactor this...
+  // add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
+  // add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
+  // return g;
 }
 
-function add_game_listeners_to_socket(socket_id, other_socket_id, no){
+Game.prototype.sayHello = function() {
+  console.log("Hello, I'm a game", this);
+};
+
+Game.prototype.emit = function(event_name, obj){
+  return io.to('game:'+this.id).emit(event_name, obj)
+}
+
+Game.prototype.start = function(){
+  //tell the first player to start
+  this.emit('start_turn', this)
+}
+
+Game.prototype.set_listeners = function(socket_id, other_socket_id, no){
+
   socket = io.sockets.socket(socket_id);
   other_socket = io.sockets.socket(other_socket_id);
-  //this var is never used, consider deleting
-  socket.set('player_no', no);
+
   socket.on('derp', function(derp){
-    socket.emit('message', derp);
+    socket.emit('server_broadcast', derp);
   });
   socket.on('roll', function(game_id){
-    //maybe check if this signal is coming from the active player
-    //var the_roll = active_games[game_id]["roll"]();
-    var the_roll = roll();
-    the_roll['game_id'] = game_id;
-    //remember to update ui client-side, updating things like results this turn where necessary
-    the_roll['roller'] = true;
-    the_roll['note1'] = 'you are the roller';
-    socket.emit('roll', the_roll);
-    socket.emit('message', the_roll);
-    console.log('1st emit sent to roller ?='+(the_roll['roller'] == true).toString()+' at socket id: '+socket.id.toString());
-    
-    the_roll['roller'] = false;
-    the_roll['note2'] = 'you are not the roller';
-    other_socket.emit('roll', the_roll);
-    console.log('2nd emit sent to roller ?='+(the_roll['roller'] == true).toString()+' at socket id: '+socket.id.toString());
-    if(the_roll["bust"] == false){
-      active_games[game_id]["results_this_turn"].push(the_roll["first"] + the_roll["second"]);
-    }else if(the_roll["bust"] == true){
-      between_turn(socket, other_socket, game_id, no);
+    // TODO: validate the socket sending the roll
+
+    var game = validate_actionable(socket, 'roll', game_id)
+    if(!game){
+      return
     }
+
+    game.roll()
   });
   socket.on('hold', function(game_id){
-    var total = hold(game_id);
-    active_games[game_id]["player"+no.toString()]["total"] += total;
-    other_socket.emit('hold', game_id);
-    between_turn(socket, other_socket, game_id, no);
+    var game = validate_actionable(socket, 'hold', game_id)
+    if(!game){
+      return
+    }
+    game.hold()
   });
 }
 
-function between_turn(socket, other_socket, game_id, player_no){
-  var active_player = 'player'+player_no.toString();
-  active_games[game_id]['results_this_turn'] = [];
-  var total = active_games[game_id][active_player]['total'];
+var validate_actionable = function(socket, action, game_id) {
+  var game = active_games[game_id]
+  if(!game){
+    console.error(socket.id, 'sent a ', action, ' to an inactive game')
+    return false
+  }
+
+  if(socket.id != game.active_player.socket_id){
+    console.error(socket.id, 'sent a ',action,', but its still', game.active_player.socket_id, "\'s turn")
+    return false
+  }
+
+  return game
+};
+
+Game.prototype.between_turns = function(){
+  this.results_this_turn = [];
+  var total = this.totals[this.active_player.id];
   if(total >= 100){
     //set player won
-    active_games[game_id]['winner'] = active_player;
-    socket.emit('won', game_id);
-    other_socket.emit('lost', game_id);
+    this.winner = active_player;
+    this.emit('game_end', this);
+    // move this over to another hash? out of active_games?
   }else{
     //no winner yet
     //tell the current player to start his t
-
-    socket.emit('end_turn', game_id);
-    other_socket.emit('start_turn', game_id);
-
-    // isMyTurn = (isMyTurn == false);
-    // if(isMyTurn){
-    //   console.log('player\'s turn');
-    //   $('#status').text('player\'s turn');
-    //   take_player_turn();
-    // }else{
-    //   console.log("opponent\'s turn");
-    //   $('#status').text('opponent\'s turn');
-    //   take_ai_turn();
-    // }
+    if(this.active_player.id == this.player1.id){
+      this.active_player = this.player2
+    }else{
+      this.active_player = this.player1
+    }
+    this.emit('start_turn', this)
   }
 }
 
-function roll(){
-  var retval = {};
-  retval["first"] = Math.floor(Math.random()*5)+1;
-  retval["second"] = Math.floor(Math.random()*5)+1;
-  retval["roll_result"] = (retval["first"] + retval["second"]).toString();
-  if(retval["first"] == 1 || retval["second"] == 1){
-    retval["bust"] = true;
+Game.prototype.roll = function(){
+  var roll_result = {};
+  roll_result['game_id'] = this.id
+  roll_result['roller'] = this.active_player.name;
+
+  roll_result["first"] = Math.floor(Math.random()*5)+1;
+  roll_result["second"] = Math.floor(Math.random()*5)+1;
+  roll_result["roll_result"] = (roll_result["first"] + roll_result["second"]).toString();
+  if(roll_result["first"] == 1 || roll_result["second"] == 1){
+    roll_result["bust"] = true;
   }else{
-    retval["bust"] = false;
+    roll_result["bust"] = false;
   }
-  return retval;
+
+  game.last_roll = roll_result
+
+  game.emit('roll_result', game);
+
+  if(!roll_result["bust"]){
+    game["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
+  } else {
+    game.between_turns();
+  }
 }
 
-function hold(game_id){
-  var total = turn_total(active_games[game_id]['results_this_turn']);
-  return total;
+Game.prototype.hold = function(){
+  var total = this.turn_total();
+  game.last_total = total
+  game['totals'][game.active_player.id] += total;
+  game.emit('hold_result', total);
+  game.between_turns();
 }
-function turn_total(a_turns_results){
+
+Game.prototype.turn_total = function(){
   var total = 0;
-  $.each(a_turns_results,function() {
-      total += this;
+  this['results_this_turn'].forEach(function(r) {
+    total += r;
   });
   return total;
-}
-
-function start(socket_id, other_socket_id, game_id, starting_player){
-  //tell the first player to start
-  io.sockets.socket(socket_id).emit('start_turn', game_id);
-  io.sockets.socket(other_socket_id).emit('end_turn', game_id);
 }
 
 var isMatchmaking = false;
 var match_maker;
 
+function getMatchMakingPlayers(){
+  return Object.keys(io.sockets.adapter.rooms['matchmaking'] || {})
+}
+
 function countMatchMaking(){
-  return Object.keys(io.sockets.adapter.rooms['matchmaking'] || {}).length
+  return getMatchMakingPlayers().length
 }
 
 function match_make(){
@@ -285,28 +328,51 @@ function match_make(){
   console.log('players lfg atm: '+players_lfg_length.toString())
   if(players_lfg_length > 1){
     //note: splice returns an array 
-    var player1 = players_lfg.splice(0, 1)[0];
-    var player2 = players_lfg.splice(0, 1)[0];
-    console.log(player1);
-    console.log(player2);
-    var game = make_game(player1, player2);
+    var all_matchmakers = getMatchMakingPlayers()
+    player1_socket_id = all_matchmakers[0]
+    player2_socket_id = all_matchmakers[1]
+
+    var player1_socket = io.sockets.connected[player1_socket_id]
+    var player1 = player1_socket.handshake.session.user
+
+    var player2_socket = io.sockets.connected[player2_socket_id]    
+    var player2 = player2_socket.handshake.session.user
+
+    console.log('making a game with', player1, 'and', player2)
+    var game = new Game(player1, player2);
+    
+    player1_socket.leave('matchmaking')
+    player2_socket.leave('matchmaking')
+
+    player1_socket.join('game:'+game.id)
+    player2_socket.join('game:'+game.id)
+
     // console.log(player1);
     // console.log(player2);
-    io.sockets.socket(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player2["name"]});
-    io.sockets.socket(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player1["name"]});
+    io.to('game:'+game.id).emit('create_game', game)
+
+    io.to('game:'+game.id).emit('roomname', 'game:'+game.id)
+    // io.to(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player2["name"]});
+    // io.to(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player1["name"]});
+    
     //socket1 socket2 game_id, starting_player
-    active_games[game['id']] = game;
-    start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
-    if(players_lfg.length > 0){
+    game.start()
+    // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
+    if(countMatchMaking().length > 0){
       var cool_number = 200/players_lfg.length;
       if(cool_number < 2){
         cool_number = 2;
       }
+      console.log('re-queueing matchmaking in', cool_number, 'ms')
       match_maker = setTimeout(match_make, cool_number);
     }else{
       isMatchmaking = false;
     }
+  }else if(players_lfg_length == 1){
+    console.log('stopping matchmaking', 'so alone DaFeels')
+    isMatchmaking = false;
   }else{
+    console.log('re-queueing matchmaking in', 200, 'ms')
     match_maker = setTimeout(match_make, 200);
   }
 }

@@ -54,16 +54,19 @@
         </div>
       </div>
       <div class="row" style="height: 100%">
-        <div class="col-md-8"></div>
+        <div class="col-md-8">
+          <div id="main">
+          </div>
+        </div>
         <div class="col-md-4 well" style="height: 100%; display: none;" id="chat">
           <div style="height: 90%;">
             <ul id="server-broadcast" style="overflow-y:scroll; position: absolute; left: 0; right: 0; top: 0; bottom: 50px;">
             </ul>
           </div>
-          <form class="form-inline" action="">
+          <div class="form-inline" action="">
             <input class="form-control" id="message" autocomplete="off" placeholder="Enter a message..." /> 
             <button id="send_message" type="button" class="btn">Send</button>
-          </form>
+          </div>
         </div>
       </div>
     </div>
@@ -80,8 +83,8 @@
         var scrolldown = false
         var scrollTop = $("#server-broadcast").scrollTop()+$("#server-broadcast").height()
         var scrollHeight = $("#server-broadcast")[0].scrollHeight
-        console.log("scrollTop:", scrollTop)
-        console.log("scrollHeight:", scrollHeight)
+        // console.log("scrollTop:", scrollTop)
+        // console.log("scrollHeight:", scrollHeight)
         if(scrollHeight - scrollTop < 2){
           scrolldown = true
         }
@@ -92,12 +95,16 @@
       }
       socket.on('news', function (data) {
         console.log(data);
-        addMessage("<li>"+data.toString()+"</li>")
+        addMessage(data.toString())
         socket.emit('my other event', { my: 'data' });
       });
+      socket.on('server_broadcast', function(d){
+        console.log(d)
+        addMessage("Game Server: "+d)        
+      })
       socket.on('message', function(d){
         console.log(d)
-        addMessage("<li>"+d+"</li>")
+        addMessage(d['user']['name']+': '+d['message'])
       })
       socket.on('status', function(d){
         console.log(d)
@@ -114,14 +121,112 @@
         $('#roomname').text(roomname)
       })
 
-      $('#loginbtn').click(function(){
-        var new_name = $('#name').val()
-        socket.emit('log_in', {name: new_name})
+      socket.on('matchmaking_list', function (list){
+        $('#main').html('<ul id="mmlist"></ul>')
+        list.forEach(function (i){
+          $('#mmlist').append('<li>'+i['name']+'</li>')
+        })
       })
 
-      $('#send_message').click(function(){
-        socket.emit('send_message', {user: user, message: $('#message').val()})
+      socket.on('create_game', function (g){
+        // TODO
+        console.log('create_game', g)
+
+        var score_template = '<table class="table table-bordered"><thead>'+
+          '<tr><td class="'+g['player1'].id+'"><span class="name">'+
+          g['player1']['name']+
+          '</span><span class="score"></span></td>'+
+          '<td class="'+g['player2'].id+'"><span class="name" >'+
+          g['player2']['name']+
+          '</span><span class="score"></span></td>'+
+          '</tr></thead><tbody class="turns"></tbody>'+
+          '</table>'
+        var main_template = '<div class="game" id="'+
+          g.id+'"><div class="gameinfo">'+score_template+
+          '</div><div class="gameactions"></div></div>'
+        if($('#games').length == 0){
+          $('#main').html('<div id="games"></div>')
+        }
+        $('#games').append(main_template)
       })
+
+      socket.on('start_turn', function (game){
+        // TODO
+        addMessage('start_turn: '+game.active_player.name)
+        if(game.active_player.id == user.id){
+          // our turn
+          // show actions
+          $('#'+game.id+' > .gameactions').html('<button class="btn rollbtn">Roll</button> <button class="btn holdbtn">Hold</button>')
+        }else if($('#'+game.id+' > .gameactions').length > 0){
+          $('#'+game.id+' > .gameactions').hide()
+          // opponent turn
+          // show "waiting for opponent"
+        }
+        $('#'+game.id+' > .turns').last().append("<tr class='turn'><td class='"+game.player1.id+"s-turn'></td><td class='"+game.player2.id+"s-turn'></td></tr>")
+        console.log('start_turn', game.active_player)
+      })
+      socket.on('roll_result', function (game){
+        // TODO
+        addMessage("roll_result: "+JSON.stringify(game.last_roll))
+        console.log('roll_result', game.last_roll)
+        var td = $('#'+game.id+" > ."+game.active_player.id+"s-turn").last()
+        td.append("["+game.last_roll.first+", "+game.last_roll.second+"]")
+        
+      })
+      socket.on('hold_result', function (game){
+        var total = game.last_total
+        addMessage("hold_result: "+total)
+        console.log('hold_result', total)
+        // TODO
+        // add to score total for this player?
+        var overallscore = game.totals[active_player.id]
+        var td = $('#'+game.id+" > ."+game.active_player.id+"s-turn").last().append("= "+total)
+        $('#'+game.id+" > ."+game.active_player.id+" > score").text(overallscore)
+
+      })
+
+      socket.on('game_end', function (game){
+        var msg = 'Game Over! '+game.winner.name+" Wins!"
+        $('#'+game.id).append(msg)
+
+        addMessage(msg)
+        console.log('game_end', game)
+      })
+
+      function login_button () {
+        console.log('logging in')
+        var new_name = $('#name').val()
+        socket.emit('log_in', {name: new_name})
+      }
+      $('#loginbtn').click(function(){login_button()})
+      $('#name').keyup(function(e){
+        if(e.keyCode == 13){
+          login_button()
+        }
+      });
+
+      $('.rollbtn').click(function(){
+        var game_id = $(this).nearest('.game').attr('id')
+        socket.emit('roll', game_id)
+      })
+
+      $('.holdbtn').click(function(){
+        var game_id = $(this).nearest('.game').attr('id')
+        socket.emit('hold', game_id)
+      })
+
+      function send_message_button () {
+        var msg = {user: user, message: $('#message').val(), roomname: $('#roomname').text()}
+        // console.log('sending a message', msg)
+        socket.emit('send_message', msg)
+        $('#message').val('')
+      }
+      $('#send_message').click(function(){send_message_button()})
+      $('#message').keyup(function(e){
+        if(e.keyCode == 13){
+          send_message_button()
+        }
+      });
 
     </script>
   </body>
