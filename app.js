@@ -1,12 +1,32 @@
-var PORT = process.env.PORT || 4000;
+var PORT = process.env.PORT || 8080;
 
 if(process.env.NODE_ENV !== "production"){
   var dotenv = require('dotenv')
   dotenv.load()  
 }
-
 var fs = require('fs')
 var app = require('express')();
+
+var FileStreamRotator = require('file-stream-rotator')
+var morgan = require('morgan')
+
+var logDirectory = __dirname + '/log'
+
+// ensure log directory exists
+fs.existsSync(logDirectory) || fs.mkdirSync(logDirectory)
+
+// create a rotating write stream
+var accessLogStream = FileStreamRotator.getStream({
+  filename: logDirectory + '/access-%DATE%.log',
+  frequency: '24h',
+  verbose: false, 
+  date_format: "YYYY-MM-DD"
+})
+
+// setup the logger
+app.use(morgan('combined', {stream: accessLogStream}))
+
+
 var server = require('http').Server(app);
 console.log('STARTED SOCKET.IO IMPORT')
 var socketio = require('socket.io')
@@ -50,13 +70,17 @@ app.use(session(sessionSettings));
 
 io.use(socketHandshake(sessionSettings))
 
+var User = function(){
+  this.id = guid()
+  this.created_at = (new Date).getTime()
+  this.wins = 0
+  this.losses = 0
+}
+
 app.get('/', function (req, res) {
   if (!req.session.user) {
     console.log('New User! HTTP from:', req.ip)
-    req.session.user = {
-      id: guid(),
-      created_at: (new Date).getTime()
-    }
+    req.session.user = new User()
   }
   req.session.user.last_connect = (new Date).getTime()
   res.render('index', {
@@ -79,10 +103,7 @@ io.on('connection', function (socket) {
   var session_user = socket.handshake.session.user 
     if (!session_user) {
       console.log('New User! websocket from:', socket.id)
-      session_user = {
-        id: guid(),
-        created_at: (new Date).getTime()
-      }
+      session_user = new User()
     }
     // console.log('old user:', session_user);
     session_user.last_connect = (new Date).getTime()
@@ -94,7 +115,6 @@ io.on('connection', function (socket) {
   socket.on('herp', function(derp){
     socket.emit('derp', derp);
   });
-  socket.emit('roomname', 'global chat')
 
   io.emit('status', io.sockets.sockets.length.toString()+' players online');
 
@@ -109,6 +129,7 @@ io.on('connection', function (socket) {
       pay_attention(socket)
     });
   }
+
   socket.on('send_message', function(data){
     // validate contents of message
     if(!data || !data['user'] || !data['message'] || !data['roomname']){
@@ -116,11 +137,14 @@ io.on('connection', function (socket) {
       return
     }
     // validate target room
-    if (!io.sockets.adapter.rooms[data['roomname']] || !io.sockets.adapter.rooms[data['roomname']][data['user']['socket_id']]) {
-      console.log('malformed message', data)
+    if(data['roomname'] == "server-broadcast"){
+      io.emit('message', data)
+    }else if (!io.sockets.adapter.rooms[data['roomname']] || !io.sockets.adapter.rooms[data['roomname']][data['user']['socket_id']]) {
+      console.log('malformed message, bad room', data)
       return
+    }else{
+      io.to(data['roomname']).emit('message', data)    
     }
-    io.to(data['roomname']).emit('message', data)      
   })
 
   //tell everyone when this player disconnects
@@ -152,24 +176,24 @@ function syncMatchmakers () {
 
 function pay_attention(socket){
   io.emit('server_broadcast', socket.handshake.session.user["name"]+' connected!');
-  // socket.join('matchmaking')
-  // socket.on('new_ladder_game', function(data){
-    //do something here, maybe create a persisted game
-    //do match making
-    socket.join('matchmaking')
-    socket.emit('roomname', 'matchmaking')
-
-    syncMatchmakers()
-
-    if(!isMatchmaking){
-      console.log("Queued on matchmaking server!")
-      match_make();
-    }
-    socket.emit('new_ladder_game', 'starting search, lfg, socket: '+socket.id.toString());
-    // io.sockets.socket(socket.id).emit('message', 'derp, socket finding works ');
-    // io.sockets.socket(accounts[account["email"]]["socket_id"]).emit('message', 'derp, socket finding works from the variable too');
-  // }); 
+  search_for_match(socket)
+  socket.on('search_for_match', function(){
+    search_for_match(socket)
+  })
 }
+
+function search_for_match(socket){
+  socket.join('matchmaking')
+  socket.emit('joined_room', 'matchmaking')
+
+  syncMatchmakers()
+
+  if(!isMatchmaking){
+    console.log("Queued on matchmaking server!")
+    match_make();
+  }
+}
+
 function S4() {
   return (((1+Math.random())*0x10000)|0).toString(16).substring(1);
 }
@@ -207,17 +231,12 @@ Game.prototype.start = function(){
   this.emit('start_turn', this)
 }
 
-Game.prototype.set_listeners = function(socket_id, other_socket_id, no){
-
-  socket = io.sockets.socket(socket_id);
-  other_socket = io.sockets.socket(other_socket_id);
-
+Game.prototype.set_listeners = function(socket){
   socket.on('derp', function(derp){
     socket.emit('server_broadcast', derp);
   });
   socket.on('roll', function(game_id){
     // TODO: validate the socket sending the roll
-
     var game = validate_actionable(socket, 'roll', game_id)
     if(!game){
       return
@@ -252,9 +271,26 @@ var validate_actionable = function(socket, action, game_id) {
 Game.prototype.between_turns = function(){
   this.results_this_turn = [];
   var total = this.totals[this.active_player.id];
-  if(total >= 100){
+  if(total >= 20){
     //set player won
-    this.winner = active_player;
+    this.winner = this.active_player;
+    this.loser = this.player1 == this.winnner ? this.player2 : this.player1
+    io.sockets.adapter.rooms['game:'+this.id]
+    
+    var winner_socket = io.sockets.connected[this.winner.socket_id]
+
+    this.winner = winner_socket.handshake.session.user
+    this.winner.wins = 1 + (this.winner['wins'] ? this.winner.wins : 0)
+    winner_socket.handshake.session.user = this.winner
+    winner_socket.handshake.session.save()
+
+    var loser_socket = io.sockets.connected[this.loser.socket_id]
+
+    this.loser = loser_socket.handshake.session.user
+    this.loser.losses = 1 + (this.loser['losses'] ? this.loser.losses)
+    loser_socket.handshake.session.user = this.loser
+    loser_socket.handshake.session.save()
+
     this.emit('game_end', this);
     // move this over to another hash? out of active_games?
   }else{
@@ -274,8 +310,8 @@ Game.prototype.roll = function(){
   roll_result['game_id'] = this.id
   roll_result['roller'] = this.active_player.name;
 
-  roll_result["first"] = Math.floor(Math.random()*5)+1;
-  roll_result["second"] = Math.floor(Math.random()*5)+1;
+  roll_result["first"] = 1 + Math.floor(Math.random() * 6);
+  roll_result["second"] = 1 + Math.floor(Math.random() * 6);
   roll_result["roll_result"] = (roll_result["first"] + roll_result["second"]).toString();
   if(roll_result["first"] == 1 || roll_result["second"] == 1){
     roll_result["bust"] = true;
@@ -283,23 +319,26 @@ Game.prototype.roll = function(){
     roll_result["bust"] = false;
   }
 
-  game.last_roll = roll_result
+  this.last_roll = roll_result
 
-  game.emit('roll_result', game);
 
   if(!roll_result["bust"]){
-    game["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
-  } else {
-    game.between_turns();
+    this["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
+  } 
+  this.last_total = this.turn_total()
+  this.emit('roll_result', this);
+
+  if(roll_result['bust']) {
+    this.between_turns();
   }
 }
 
 Game.prototype.hold = function(){
   var total = this.turn_total();
-  game.last_total = total
-  game['totals'][game.active_player.id] += total;
-  game.emit('hold_result', total);
-  game.between_turns();
+  this.last_total = total
+  this['totals'][this.active_player.id] += total;
+  this.emit('hold_result', this);
+  this.between_turns();
 }
 
 Game.prototype.turn_total = function(){
@@ -349,14 +388,16 @@ function match_make(){
 
     // console.log(player1);
     // console.log(player2);
-    io.to('game:'+game.id).emit('create_game', game)
-
-    io.to('game:'+game.id).emit('roomname', 'game:'+game.id)
+    game.emit('create_game', game)
+    game.emit('joined_room', 'game:'+game.id)
+    game.emit('left_room', 'matchmaking')
     // io.to(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player2["name"]});
     // io.to(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player1["name"]});
     
     //socket1 socket2 game_id, starting_player
     game.start()
+    game.set_listeners(player1_socket)
+    game.set_listeners(player2_socket)
     // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
     if(countMatchMaking().length > 0){
       var cool_number = 200/players_lfg.length;

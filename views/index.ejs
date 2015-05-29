@@ -8,9 +8,41 @@
       html, body {
         height: 100%;
       }
-      #server-broadcast { list-style-type: none; margin: 0; padding: 0; }
-      #server-broadcast li { padding: 5px 10px; }
-      #server-broadcast li:nth-child(odd) { background: #eee; }
+      .crossed-out {
+        text-decoration: line-through;
+      }
+      .chat {
+        height: 100%; 
+        display: none;
+        padding: 2px;
+      }
+
+      #roompicker li a {
+        padding: 5px 10px;
+      }
+
+      .chatboxes {
+
+      }
+      .chat-lines { 
+        list-style-type: none; 
+        margin: 0; 
+        padding: 0;  
+        overflow-y: scroll;
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 30px;
+        bottom: 44px;
+        word-wrap: break-word; 
+      }
+      .chat-lines li { padding: 5px 10px; }
+      .chat-lines li:nth-child(odd) { background: #ddd; }
+      .chat-input-box {
+        position: absolute; 
+        bottom: 0;
+        margin: 8px;
+      }
     </style>
   </head>
   <body>
@@ -31,12 +63,17 @@
             <a href="#" id="username"><%= (user && user['name']) ? user.name : "User Name" %></a>
           </li>
           <li>
-            <a href="#" id="roomname">Room Name
+            <a href="#" id="wins">Wins
+            </a>
+          </li>
+          <li>
+            <a href="#" id="losses">Losses
             </a>
           </li>
         </ul>
         <ul class="nav navbar-nav navbar-right">
-          <li><a href="http://expo.getbootstrap.com" id="status">Server Status</a></li>
+          <li><a class="btn btn-success" href="#" id="search_for_match">Search for a Game</a></li>
+          <li><a href="#" id="status">Server Status</a></li>
         </ul>
       </nav>
     </div>
@@ -58,14 +95,19 @@
           <div id="main">
           </div>
         </div>
-        <div class="col-md-4 well" style="height: 100%; display: none;" id="chat">
-          <div style="height: 90%;">
-            <ul id="server-broadcast" style="overflow-y:scroll; position: absolute; left: 0; right: 0; top: 0; bottom: 50px;">
+        <div class="col-md-4 well chat" role="tabpanel">
+          <div class="nav nav-tabs" id="roompicker" role="tablist">
+            <li role="presentation" class="active"><a href="#server-broadcast-chat" id="server-broadcast-chat-picker" aria-controls="server-broadcast-chat" role="tab" data-toggle="tab" data-roomname="server-broadcast">Global Chat</a></li>          
+          </div>
+          <div class="tab-content chatboxes">
+            <ul id="server-broadcast-chat" role="tabpanel" class="tab-pane fade in active chat-lines">
             </ul>
           </div>
-          <div class="form-inline" action="">
-            <input class="form-control" id="message" autocomplete="off" placeholder="Enter a message..." /> 
-            <button id="send_message" type="button" class="btn">Send</button>
+          <div class="form-inline chat-input-box input-group">
+            <input class="form-control" id="message" autocomplete="off" placeholder="Enter a message..." />
+            <span class="input-group-btn"> 
+              <button id="send_message" type="button" class="btn">Send</button>
+            </span>
           </div>
         </div>
       </div>
@@ -75,22 +117,52 @@
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js" type="text/javascript"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script>
+      function css_escape(string){
+        return string.replace(/[!\"#$%&'\(\)\*\+,\.\/:;<=>\?\@\[\\\]\^`\{\|\}~]/g, '');
+      }
+      $('#roompicker').on('show.bs.tab', function (e) {
+        $('#roompicker li.active').removeClass('active');
+      })
+
       var user = <%- user ? JSON.stringify(user) : null %>;
       var socket = io.connect(':'+<%= port %>);
       //disable things if theres no connection
       //make play vs ai happen offline
       function addMessage(d){
+        addMessageToRoom(d, 'server-broadcast')
+      }
+      function ensureRoom(roomname){
+        var escaped = css_escape(roomname)
+        var room_selector = "#"+escaped+"-chat"
+        if($(room_selector).length > 0){
+          return;
+        }
+        $('#roompicker').append('<li role="presentation"><a href="#'+escaped+'-chat" id="'+escaped+'-room-picker" aria-controls="'+escaped+'-chat" role="tab" data-toggle="tab" data-roomname="'+roomname+'">'+roomname.substring(0, 12)+'</a></li>')
+        $('.chatboxes').append('<ul id="'+escaped+'-chat" role="tabpanel" class="tab-pane fade chat-lines"></ul>')
+      }
+      function removeRoom(roomname){
+        var escaped = css_escape(roomname)
+        var room_selector = "#"+escaped+"-chat"
+        if($(room_selector).length == 0){
+          return;
+        }
+        $('#'+escaped+"-room-picker").remove()
+      }
+      function addMessageToRoom(d, roomname){
+        ensureRoom(roomname)
         var scrolldown = false
-        var scrollTop = $("#server-broadcast").scrollTop()+$("#server-broadcast").height()
-        var scrollHeight = $("#server-broadcast")[0].scrollHeight
+        var room_selector = "#"+css_escape(roomname)+"-chat"
+        var scrollTop = $(room_selector).scrollTop()+$(room_selector).height()
+        console.log('getting height of '+room_selector)
+        var scrollHeight = $(room_selector)[0].scrollHeight
         // console.log("scrollTop:", scrollTop)
         // console.log("scrollHeight:", scrollHeight)
         if(scrollHeight - scrollTop < 2){
           scrolldown = true
         }
-        $('#server-broadcast').append("<li>"+d+"</li>")
+        $(room_selector).append("<li>"+d+"</li>")
         if(scrolldown){
-          $("#server-broadcast").scrollTop($("#server-broadcast")[0].scrollHeight);        
+          $(room_selector).scrollTop($(room_selector)[0].scrollHeight);        
         }
       }
       socket.on('news', function (data) {
@@ -104,7 +176,7 @@
       })
       socket.on('message', function(d){
         console.log(d)
-        addMessage(d['user']['name']+': '+d['message'])
+        addMessageToRoom(d['user']['name']+': '+d['message'], d['roomname'])
       })
       socket.on('status', function(d){
         console.log(d)
@@ -115,10 +187,16 @@
         user = nuser
         $('#username').text(nuser['name'])
         $('#login').hide()
-        $('#chat').show()
+        $('.chat').show()
       })
-      socket.on('roomname', function (roomname) {
-        $('#roomname').text(roomname)
+      socket.on('joined_room', function (roomname) {
+        console.log('joined_room', roomname)
+        addMessageToRoom("Joined "+roomname, roomname)
+        // $('#roomname').text(roomname)
+      })
+      socket.on('left_room', function (roomname){
+        console.log('left_room', roomname)
+        removeRoom(roomname)
       })
 
       socket.on('matchmaking_list', function (list){
@@ -132,61 +210,90 @@
         // TODO
         console.log('create_game', g)
 
-        var score_template = '<table class="table table-bordered"><thead>'+
-          '<tr><td class="'+g['player1'].id+'"><span class="name">'+
-          g['player1']['name']+
-          '</span><span class="score"></span></td>'+
-          '<td class="'+g['player2'].id+'"><span class="name" >'+
-          g['player2']['name']+
-          '</span><span class="score"></span></td>'+
-          '</tr></thead><tbody class="turns"></tbody>'+
-          '</table>'
+        var score_template = '<div class="row"><div class="col-md-6"><ul class="unstyled '+g.player1.id+' turns">'+
+          '<li><span class="name">'+
+          g.player1.name+
+          '</span> <span class="score"></span></li></ul>'+
+          (g.player1.id == user.id ? '<div class="gameactions"></div>': "")+
+          '</div>'+
+          '<div class="col-md-6"><ul class="unstyled '+g.player2.id+' turns"><li><span class="name" >'+
+          g.player2.name+
+          '</span> <span class="score"></span></li>'+
+          '</ul>'+
+          (g.player2.id == user.id ? '<div class="gameactions"></div>': "")+
+          '</div></div>'
         var main_template = '<div class="game" id="'+
           g.id+'"><div class="gameinfo">'+score_template+
-          '</div><div class="gameactions"></div></div>'
+          '</div></div>'
         if($('#games').length == 0){
           $('#main').html('<div id="games"></div>')
         }
         $('#games').append(main_template)
+
       })
+      $( document ).on( "click", ".rollbtn", function() {
+        console.log($(this))
+        var game_id = $(this).closest('.game').attr('id')
+        console.log('rolling on', game_id)
+        socket.emit('roll', game_id)
+      });
+
+      $( document ).on( "click", ".holdbtn", function() {
+        var game_id = $(this).closest('.game').attr('id')
+        console.log('holding on', game_id)
+        socket.emit('hold', game_id)
+      });
 
       socket.on('start_turn', function (game){
         // TODO
-        addMessage('start_turn: '+game.active_player.name)
+        addMessage(game.active_player.name+" starts their turn")
         if(game.active_player.id == user.id){
           // our turn
           // show actions
-          $('#'+game.id+' > .gameactions').html('<button class="btn rollbtn">Roll</button> <button class="btn holdbtn">Hold</button>')
-        }else if($('#'+game.id+' > .gameactions').length > 0){
-          $('#'+game.id+' > .gameactions').hide()
+          if($('#'+game.id+' .gameactions').children().length == 0){
+            $('#'+game.id+' .gameactions').html('<button class="btn rollbtn">Roll</button> <button class="btn holdbtn">Hold</button>')
+            console.log('generating game actions')
+          }
+          console.log('showing game actions')
+          $('#'+game.id+' .gameactions').show()
+        }else if($('#'+game.id+' .gameactions').length > 0){
+          $('#'+game.id+' .gameactions').hide()
           // opponent turn
           // show "waiting for opponent"
         }
-        $('#'+game.id+' > .turns').last().append("<tr class='turn'><td class='"+game.player1.id+"s-turn'></td><td class='"+game.player2.id+"s-turn'></td></tr>")
+        $('#'+game.id+' .'+game.active_player.id+'.turns').append("<li class='turn'><span class='turn_total'></span></li>")
         console.log('start_turn', game.active_player)
       })
       socket.on('roll_result', function (game){
         // TODO
-        addMessage("roll_result: "+JSON.stringify(game.last_roll))
+        addMessage(game.active_player.name+" rolls "+game.last_roll['first']+" "+game.last_roll['second'])
         console.log('roll_result', game.last_roll)
-        var td = $('#'+game.id+" > ."+game.active_player.id+"s-turn").last()
-        td.append("["+game.last_roll.first+", "+game.last_roll.second+"]")
+
+        var li = $('#'+game.id+" ."+game.active_player.id+".turns").children().last()
+        li.append("["+game.last_roll.first+", "+game.last_roll.second+"]")
+        li.find('.turn_total').text(game.last_total+" =")
+        if(game.last_roll['bust']){
+          li.find('.turn_total').addClass('crossed-out')
+          li.prepend("BUST!! ")
+        }
         
       })
       socket.on('hold_result', function (game){
-        var total = game.last_total
-        addMessage("hold_result: "+total)
-        console.log('hold_result', total)
         // TODO
         // add to score total for this player?
-        var overallscore = game.totals[active_player.id]
-        var td = $('#'+game.id+" > ."+game.active_player.id+"s-turn").last().append("= "+total)
-        $('#'+game.id+" > ."+game.active_player.id+" > score").text(overallscore)
+        var overallscore = game.totals[game.active_player.id]
+        console.log(game.totals)
+        // var td = $('#'+game.id+" ."+game.active_player.id+".turns").children().last().append("= "+total)
+        $('#'+game.id+" ."+game.active_player.id+" .score").text(overallscore)
 
+        var total = game.last_total
+        addMessage(game.active_player.name+" holds on to "+total+' points')
+        console.log('hold_result', total)
       })
 
       socket.on('game_end', function (game){
         var msg = 'Game Over! '+game.winner.name+" Wins!"
+        $('#'+game.id+' .gameactions').html('')
         $('#'+game.id).append(msg)
 
         addMessage(msg)
@@ -205,18 +312,8 @@
         }
       });
 
-      $('.rollbtn').click(function(){
-        var game_id = $(this).nearest('.game').attr('id')
-        socket.emit('roll', game_id)
-      })
-
-      $('.holdbtn').click(function(){
-        var game_id = $(this).nearest('.game').attr('id')
-        socket.emit('hold', game_id)
-      })
-
       function send_message_button () {
-        var msg = {user: user, message: $('#message').val(), roomname: $('#roomname').text()}
+        var msg = {user: user, message: $('#message').val(), roomname: $('#roompicker li.active a').data('roomname')}
         // console.log('sending a message', msg)
         socket.emit('send_message', msg)
         $('#message').val('')
