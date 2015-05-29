@@ -72,7 +72,9 @@
           </li>
         </ul>
         <ul class="nav navbar-nav navbar-right">
-          <li><a class="btn btn-success" href="#" id="search_for_match">Search for a Game</a></li>
+          <li>
+            <button class="btn btn-success navbar-btn" id="search_for_match">Search for a Game</button>
+          </li>
           <li><a href="#" id="status">Server Status</a></li>
         </ul>
       </nav>
@@ -120,12 +122,16 @@
       function css_escape(string){
         return string.replace(/[!\"#$%&'\(\)\*\+,\.\/:;<=>\?\@\[\\\]\^`\{\|\}~]/g, '');
       }
+      // fix tabs so that the right one 
+      // is active at the right time
       $('#roompicker').on('show.bs.tab', function (e) {
         $('#roompicker li.active').removeClass('active');
       })
 
       var user = <%- user ? JSON.stringify(user) : null %>;
       var socket = io.connect(':'+<%= port %>);
+
+
       //disable things if theres no connection
       //make play vs ai happen offline
       function addMessage(d){
@@ -209,6 +215,7 @@
       socket.on('create_game', function (g){
         // TODO
         console.log('create_game', g)
+        $('#search_for_match').text("Start another Game")
 
         var score_template = '<div class="row"><div class="col-md-6"><ul class="unstyled '+g.player1.id+' turns">'+
           '<li><span class="name">'+
@@ -229,8 +236,15 @@
           $('#main').html('<div id="games"></div>')
         }
         $('#games').append(main_template)
-
+        $(this).prop("disabled", false)
       })
+      
+      $( document ).on( "click", "#search_for_match", function() {
+        console.log($(this))
+        socket.emit('search_for_match')
+        $(this).prop("disabled", true)
+      });
+
       $( document ).on( "click", ".rollbtn", function() {
         console.log($(this))
         var game_id = $(this).closest('.game').attr('id')

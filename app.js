@@ -101,13 +101,13 @@ var active_games = {};
 
 io.on('connection', function (socket) {
   var session_user = socket.handshake.session.user 
-    if (!session_user) {
-      console.log('New User! websocket from:', socket.id)
-      session_user = new User()
-    }
-    // console.log('old user:', session_user);
-    session_user.last_connect = (new Date).getTime()
-    session_user.socket_id = socket.id
+  if (!session_user) {
+    console.log('New User! websocket from:', socket.id)
+    session_user = new User()
+  }
+  // console.log('old user:', session_user);
+  session_user.last_connect = (new Date).getTime()
+  session_user.socket_id = socket.id
   socket.handshake.session.user = session_user
   socket.handshake.session.save()
   console.log('socket connected! user:', socket.handshake.session.user);
@@ -150,6 +150,7 @@ io.on('connection', function (socket) {
   //tell everyone when this player disconnects
   socket.on('disconnect', function(){
     console.log('socket disconnected', socket.id)
+    
     // socket.get('account', function (err, account) {
     //  //
     //  if(account != null){
@@ -268,30 +269,35 @@ var validate_actionable = function(socket, action, game_id) {
   return game
 };
 
+Game.prototype.declare_winner = function(player) {
+  //set player won
+  this.winner = player;
+  this.loser = this.player1 == this.winnner ? this.player2 : this.player1
+  io.sockets.adapter.rooms['game:'+this.id]
+  
+  var winner_socket = io.sockets.connected[this.winner.socket_id]
+
+  this.winner = winner_socket.handshake.session.user
+  this.winner.wins = 1 + (this.winner['wins'] ? this.winner.wins : 0)
+  winner_socket.handshake.session.user = this.winner
+  winner_socket.handshake.session.save()
+
+  var loser_socket = io.sockets.connected[this.loser.socket_id]
+
+  this.loser = loser_socket.handshake.session.user
+  this.loser.losses = 1 + (this.loser['losses'] ? this.loser.losses : 0)
+  loser_socket.handshake.session.user = this.loser
+  loser_socket.handshake.session.save()
+
+  this.emit('game_end', this);
+  // body...
+};
+
 Game.prototype.between_turns = function(){
   this.results_this_turn = [];
   var total = this.totals[this.active_player.id];
   if(total >= 20){
-    //set player won
-    this.winner = this.active_player;
-    this.loser = this.player1 == this.winnner ? this.player2 : this.player1
-    io.sockets.adapter.rooms['game:'+this.id]
-    
-    var winner_socket = io.sockets.connected[this.winner.socket_id]
-
-    this.winner = winner_socket.handshake.session.user
-    this.winner.wins = 1 + (this.winner['wins'] ? this.winner.wins : 0)
-    winner_socket.handshake.session.user = this.winner
-    winner_socket.handshake.session.save()
-
-    var loser_socket = io.sockets.connected[this.loser.socket_id]
-
-    this.loser = loser_socket.handshake.session.user
-    this.loser.losses = 1 + (this.loser['losses'] ? this.loser.losses)
-    loser_socket.handshake.session.user = this.loser
-    loser_socket.handshake.session.save()
-
-    this.emit('game_end', this);
+    this.declare_winner(this.active_player)
     // move this over to another hash? out of active_games?
   }else{
     //no winner yet
