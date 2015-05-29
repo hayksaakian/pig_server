@@ -16,7 +16,7 @@ function makeRedisClient (redis_db) {
     console.log('Connected to redis#'+redis_db.toString());
   });
   rv.on('error', function (er) {
-    console.trace('Channel_fetcher') // [1]
+    console.trace('makeRedisClient') // [1]
     console.error(er.stack) // [2]
   })
 
