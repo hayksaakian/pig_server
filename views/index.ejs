@@ -95,6 +95,8 @@
       <div class="row" style="height: 100%">
         <div class="col-md-8">
           <div id="main">
+            <div id="matchmaking"></div>
+            <div id="games"></div>
           </div>
         </div>
         <div class="col-md-4 well chat" role="tabpanel">
@@ -206,7 +208,7 @@
       })
 
       socket.on('matchmaking_list', function (list){
-        $('#main').html('<ul id="mmlist"></ul>')
+        $('#matchmaking').html('<ul id="mmlist"></ul>')
         list.forEach(function (i){
           $('#mmlist').append('<li>'+i['name']+'</li>')
         })
@@ -232,9 +234,7 @@
         var main_template = '<div class="game" id="'+
           g.id+'"><div class="gameinfo">'+score_template+
           '</div></div>'
-        if($('#games').length == 0){
-          $('#main').html('<div id="games"></div>')
-        }
+        
         $('#games').append(main_template)
         $(this).prop("disabled", false)
       })

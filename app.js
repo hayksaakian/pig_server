@@ -171,7 +171,7 @@ function syncMatchmakers () {
   var users = in_mm.map(function (socketId){
     return io.sockets.connected[socketId].handshake.session.user
   })
-  console.log(users)
+  console.log('in matchmaking:', users)
   io.to('matchmaking').emit('matchmaking_list', users)
 }
 
