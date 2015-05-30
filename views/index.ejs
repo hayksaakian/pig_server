@@ -63,11 +63,11 @@
             <a href="#" id="username"><%= (user && user['name']) ? user.name : "User Name" %></a>
           </li>
           <li>
-            <a href="#" id="wins">Wins
+            <a href="#" id="wins"><%= (user && user['wins'] ? user.wins : '') %> Wins
             </a>
           </li>
           <li>
-            <a href="#" id="losses">Losses
+            <a href="#" id="losses"><%= (user && user['losses'] ? user.losses : '') %> Losses
             </a>
           </li>
         </ul>
@@ -96,11 +96,11 @@
         <div class="col-md-8">
           <div id="main">
             <div id="matchmaking_view">
-              <h4>Matchmaking list</h4>
+              <h3>Matchmaking list</h3>
               <div id="matchmaking"></div>            
             </div>
             <div id="games_view">
-              <h4>Games:</h4>
+              <h3>Games:</h3>
               <div id="games"></div>            
             </div>
           </div>
@@ -258,6 +258,15 @@
         socket.emit('roll', game_id)
       });
 
+
+      $( document ).on( "click", ".closebtn", function() {
+        console.log($(this))
+        var game_id = $(this).closest('.game').attr('id')
+        $(this).closest('.game').remove()
+        socket.emit('leave_room', 'game:'+game_id)
+        removeRoom(game_id)
+      });
+
       $( document ).on( "click", ".holdbtn", function() {
         var game_id = $(this).closest('.game').attr('id')
         console.log('holding on', game_id)
@@ -315,7 +324,12 @@
         var msg = 'Game Over! '+game.winner.name+" Wins!"
         $('#'+game.id+' .gameactions').html('')
         $('#'+game.id).append(msg)
-
+        $('#'+game.id).append("<button class='btn btn-warning closebtn' type='button'>Close this Game and related Chat</button>")
+        if(user.id == game.winner.id){
+          $('#wins').text(game.winner.wins+" Wins")
+        }else{
+          $('#losses').text(game.loser.losses+" Losses")
+        }
         addMessage(msg)
         console.log('game_end', game)
       })

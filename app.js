@@ -181,6 +181,14 @@ function pay_attention(socket){
   socket.on('search_for_match', function(){
     search_for_match(socket)
   })
+
+
+  socket.on('leave_room', function (roomname){
+    // TODO
+    // consider the consequences of allowing 
+    // any user to leave any room
+    socket.leave(roomname)
+  })
 }
 
 function search_for_match(socket){
@@ -290,6 +298,10 @@ Game.prototype.declare_winner = function(player) {
   loser_socket.handshake.session.save()
 
   this.emit('game_end', this);
+
+  // individuals will leave the room on their own
+  // winner_socket.leave('game:'+this.id)
+  // loser_socket.leave('game:'+this.id)
   // body...
 };
 
