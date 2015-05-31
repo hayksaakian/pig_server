@@ -100,6 +100,23 @@ var active_games = {};
 //a_socket.emit("some_key", "some_value");
 
 io.on('connection', function (socket) {
+  // BUG PATCH
+  // http://stackoverflow.com/questions/25830415/get-the-list-of-rooms-the-client-is-currently-in-on-disconnect-event
+  // https://github.com/Automattic/socket.io/issues/1814
+  socket.onclose = function(reason){
+    //emit to rooms here
+    //acceess socket.adapter.sids[socket.id] to get all rooms for the socket
+    console.log(socket.adapter.sids[socket.id]);
+    console.log('socket disconnected', socket.id)
+
+    console.log('leaving:', socket.rooms)
+    socket.rooms.forEach(function (roomname){
+      cleanup_potential_gameroom(roomname, socket.id)
+    })
+    Object.getPrototypeOf(this).onclose.call(this,reason);
+  }
+
+
   var session_user = socket.handshake.session.user 
   if (!session_user) {
     console.log('New User! websocket from:', socket.id)
@@ -149,7 +166,6 @@ io.on('connection', function (socket) {
 
   //tell everyone when this player disconnects
   socket.on('disconnect', function(){
-    console.log('socket disconnected', socket.id)
     
     // socket.get('account', function (err, account) {
     //  //
@@ -166,7 +182,7 @@ io.on('connection', function (socket) {
 
 function syncMatchmakers () {
   io.emit('status', countMatchMaking()+" in matchmaking")
-  var in_mm = Object.keys(io.sockets.adapter.rooms['matchmaking'])
+  var in_mm = Object.keys(io.sockets.adapter.rooms['matchmaking'] || {})
   console.log(in_mm)
   var users = in_mm.map(function (socketId){
     return io.sockets.connected[socketId].handshake.session.user
@@ -187,6 +203,7 @@ function pay_attention(socket){
     // TODO
     // consider the consequences of allowing 
     // any user to leave any room
+    cleanup_potential_gameroom(roomname, socket.id)
     socket.leave(roomname)
   })
 }
@@ -219,6 +236,7 @@ var Game = function (player1, player2){
   this.id = guid()
   this.active_player = player1
   this.results_this_turn = []
+  this.disconnects = []
 
   active_games[this.id] = this
   // refactor this...
@@ -232,6 +250,7 @@ Game.prototype.sayHello = function() {
 };
 
 Game.prototype.emit = function(event_name, obj){
+
   return io.to('game:'+this.id).emit(event_name, obj)
 }
 
@@ -246,6 +265,7 @@ Game.prototype.set_listeners = function(socket){
   });
   socket.on('roll', function(game_id){
     // TODO: validate the socket sending the roll
+    console.log(socket.id, 'rolling for game:'+game_id)
     var game = validate_actionable(socket, 'roll', game_id)
     if(!game){
       return
@@ -265,22 +285,91 @@ Game.prototype.set_listeners = function(socket){
 var validate_actionable = function(socket, action, game_id) {
   var game = active_games[game_id]
   if(!game){
-    console.error(socket.id, 'sent a ', action, ' to an inactive game')
+    console.error(socket.id, 'sent a ', action, ' to an inactive game', game_id)
+    if(game_id.length > 5){
+      socket.emit('leave_room', game_id)
+    }
     return false
   }
 
   if(socket.id != game.active_player.socket_id){
-    console.error(socket.id, 'sent a ',action,', but its still', game.active_player.socket_id, "\'s turn")
+    console.error(socket.id, 'sent a ', action,', but its still', game.active_player.socket_id, "\'s turn")
     return false
   }
 
+  // flood detection
+  // milliseconds
+  var RATE_LIMIT = 90
+  if(game.last_socket && game.last_action && game.last_action_time){
+    if(game.last_socket == socket.id && game.last_action == action){
+      var new_time = (new Date).getTime()
+      if(game.last_action_time > (new_time - RATE_LIMIT) ){
+        console.error(socket.id, 'is flooding with', action, 'at', new_time)
+        return false
+      }else{
+        console.log('action was long enough after to avoid rate limit')
+      }
+    }else{
+      console.log('new action, or socket, rate limit ignored')
+    }
+  }else{
+    console.log('no last action, rate limit ignored')
+  }
+
+  game.last_socket = socket.id
+  game.last_action = action
+  game.last_action_time = (new Date).getTime()    
   return game
 };
 
+Game.prototype.storable = function(){
+  return {
+    id: this.id,
+    player1: this.player1.id,
+    player2: this.player2.id,
+    totals_player1: this.totals[this.player1.id],
+    totals_player2: this.totals[this.player2.id],
+    winner: (this.winner ? this.winner.id : ""),
+    loser: (this.loser ? this.loser.id : ""),
+    disconnects: this.disconnects.join(',')
+  }
+}
+
+function cleanup_potential_gameroom(roomname, socket_id){
+  if(roomname.substring(0, 5) === 'game:'){
+    console.log('cleaning up a done game here:', roomname)
+    var game = active_games[roomname.substring(5)]
+    if(game){
+      game.leaver(socket_id)
+    }
+  }
+}
+
+Game.prototype.leaver = function(socket_id) {
+  this.disconnects.push(socket_id)
+  if(this.disconnects.length == 1){
+    // only 1 disconnect....
+    // TODO: give like 30 seconds to reconnect
+    // could use a setTimeout?
+    if(!this.winner){
+      if (this.player1.socket_id == socket_id) {
+        this.declare_winner(this.player2)
+      }else if(this.player2.socket_id == socket_id){
+        this.declare_winner(this.player1)
+      }
+    }
+  }else if(this.disconnects.length == 2){
+    redis_client.hmset("finishedgame:"+this.id, this.storable())
+    delete active_games[this.id]
+  }
+}
+
 Game.prototype.declare_winner = function(player) {
   //set player won
+  console.log('declaring', player, 'winner')
+
   this.winner = player;
-  this.loser = this.player1 == this.winnner ? this.player2 : this.player1
+  this.loser = this.player1.id == this.winner.id ? this.player2 : this.player1
   io.sockets.adapter.rooms['game:'+this.id]
   
   var winner_socket = io.sockets.connected[this.winner.socket_id]
@@ -297,6 +386,7 @@ Game.prototype.declare_winner = function(player) {
   loser_socket.handshake.session.user = this.loser
   loser_socket.handshake.session.save()
 
+  console.log(this.winner.name, 'wins', this.loser.name, 'loses')
   this.emit('game_end', this);
 
   // individuals will leave the room on their own
@@ -337,8 +427,9 @@ Game.prototype.roll = function(){
     roll_result["bust"] = false;
   }
 
-  this.last_roll = roll_result
+  console.log((new Date).getTime(), this.active_player.name, 'rolled', roll_result)
 
+  this.last_roll = roll_result
 
   if(!roll_result["bust"]){
     this["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
@@ -400,6 +491,8 @@ function match_make(){
     
     player1_socket.leave('matchmaking')
     player2_socket.leave('matchmaking')
+
+    syncMatchmakers()
 
     player1_socket.join('game:'+game.id)
     player2_socket.join('game:'+game.id)
