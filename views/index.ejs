@@ -263,12 +263,12 @@
         var score_template = '<div class="row"><div class="col-md-6"><ul class="unstyled '+g.player1.id+' turns">'+
           '<li><span class="name">'+
           g.player1.name+
-          '</span> <span class="score"></span></li></ul>'+
+          '</span> <span class="score">0</span></li></ul>'+
           (g.player1.id == user.id ? '<div class="gameactions"></div>': "")+
           '</div>'+
           '<div class="col-md-6"><ul class="unstyled '+g.player2.id+' turns"><li><span class="name" >'+
           g.player2.name+
-          '</span> <span class="score"></span></li>'+
+          '</span> <span class="score">0</span></li>'+
           '</ul>'+
           (g.player2.id == user.id ? '<div class="gameactions"></div>': "")+
           '</div></div>'
@@ -336,9 +336,11 @@
         var li = $('#'+game.id+" ."+game.active_player.id+".turns").children().last()
         var first_roll = DIE_MAP[game.last_roll['first']-1]
         var second_roll = DIE_MAP[game.last_roll['second']-1]
-
-        li.append("[ "+first_roll+" + "+second_roll+" ]")
-        li.find('.turn_total').text(game.last_total+" =")
+        if(li.text().length > 0){
+          li.append(" + ")
+        }
+        li.append(first_roll+second_roll)
+        li.find('.turn_total').text(game.last_total+" = ")
         if(game.last_roll['bust']){
           li.find('.turn_total').addClass('crossed-out')
           li.prepend("BUST!! <i class='fi-skull'></i> ")
