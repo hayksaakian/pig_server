@@ -67,7 +67,9 @@
       <nav class="collapse navbar-collapse bs-navbar-collapse">
         <ul class="nav navbar-nav">
           <li class="active">
-            <a href="#" id="username"><%= (user && user['name']) ? user.name : "User Name" %></a>
+            <a href="#" data-toggle="tooltip" data-placement="bottom" id="username" title="<%= (user && user['id']) ? user.id : "User ID" %>">
+              <%= (user && user['name']) ? user.name : "User Name" %>
+            </a>
           </li>
           <li>
             <a href="#" id="wins"><%= (user && user['wins'] ? user.wins : '') %> Wins
@@ -144,6 +146,7 @@
       function css_escape(string){
         return string.replace(/[!\"#$%&'\(\)\*\+,\.\/:;<=>\?\@\[\\\]\^`\{\|\}~]/g, '');
       }
+      $('[data-toggle="tooltip"]').tooltip()
       // fix tabs so that the right one 
       // is active at the right time
       $('#roompicker').on('show.bs.tab', function (e) {
@@ -230,6 +233,7 @@
         console.log('good log in', nuser)
         user = nuser
         $('#username').text(nuser['name'])
+        $('#username').attr('title', nuser['id'])
         $('#login').hide()
         $('.chat').show()
       })
@@ -254,8 +258,9 @@
       socket.on('matchmaking_list', function (list){
         $('#matchmaking').html('<ul id="mmlist"></ul>')
         list.forEach(function (i){
-          $('#mmlist').append('<li>'+i['name']+'</li>')
+          $('#mmlist').append('<li><span data-toggle="tooltip" data-placement="top" title="'+i.id+'">'+i['name']+'</span></li>')
         })
+        $('[data-toggle="tooltip"]').tooltip()
       })
 
       socket.on('create_game', function (g){
@@ -264,12 +269,12 @@
         $('#search_for_match').text("Start another Game")
 
         var score_template = '<div class="row"><div class="col-md-6"><ul class="unstyled '+g.player1.id+' turns">'+
-          '<li><span class="name">'+
+          '<li><span data-placement="top" data-toggle="tooltip" title="'+g.player1.id+'" class="name">'+
           g.player1.name+
           '</span> <span class="score">0</span></li></ul>'+
           (g.player1.id == user.id ? '<div class="gameactions"></div>': "")+
           '</div>'+
-          '<div class="col-md-6"><ul class="unstyled '+g.player2.id+' turns"><li><span class="name" >'+
+          '<div class="col-md-6"><ul class="unstyled '+g.player2.id+' turns"><li><span data-placement="top" data-toggle="tooltip" title="'+g.player2.id+'" class="name" >'+
           g.player2.name+
           '</span> <span class="score">0</span></li>'+
           '</ul>'+
@@ -280,6 +285,7 @@
           '</div></div>'
         
         $('#games').append(main_template)
+        $('[data-toggle="tooltip"]').tooltip()
         $("#search_for_match").prop("disabled", false)
       })
       
