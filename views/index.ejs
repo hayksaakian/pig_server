@@ -106,6 +106,7 @@
             <div id="games_view">
               <h3>Games</h3>
               <div id="games"></div>
+              <hr>
               <button class="btn btn-success navbar-btn" id="search_for_match">Search for a Game</button>
             </div>
           </div>
@@ -152,6 +153,9 @@
 
       var user = <%- user ? JSON.stringify(user) : null %>;
       var socket = io.connect(':'+<%= port %>);
+      socket.on('disconnect', function(){
+        $('#main').prepend("<button onClick='(window || document).location.reload(true)' class='btn btn-danger'>LOST Connection to Server, click here to reload. Game state is not saved between server resets</button>")
+      })
 
 
       //disable things if theres no connection
@@ -174,7 +178,8 @@
         if($(room_selector).length == 0){
           return;
         }
-        $('#'+escaped+"-room-picker").remove()
+        $('#'+escaped+"-room-picker").parent().remove()
+        $(room_selector).remove()
       }
       function addMessageToRoom(d, roomname){
         ensureRoom(roomname)
