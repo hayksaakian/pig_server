@@ -32,6 +32,37 @@ console.log('STARTED SOCKET.IO IMPORT')
 var socketio = require('socket.io')
 console.log('GOOD SOCKET.IO IMPORT')
 var io = socketio(server);
+
+var Waterline = require('waterline')
+var bodyParser = require('body-parser')
+var methodOverride = require('method-override')
+
+var orm = new Waterline();
+
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+app.use(methodOverride());
+
+var redisAdapter = require('sails-redis')
+var config = {
+  adapters: {
+    'default': redisAdapter,
+    redis: redisAdapter
+  },
+  connections: {
+    myLocalRedis: {
+      adapter: 'redis',
+      database: 7
+    }
+  },
+  defaults: {}
+}
+
+orm.loadCollection(require('./models/User'))
+orm.loadCollection(require('./models/Game'))
+orm.loadCollection(require('./models/Turn'))
+
+
 var make_redis_client = require('./make_redis_client')
 var session_client = make_redis_client(7)
 var redis_client = make_redis_client(8)
@@ -70,29 +101,52 @@ app.use(session(sessionSettings));
 
 io.use(socketHandshake(sessionSettings))
 
-var User = function(){
-  this.id = guid()
-  this.created_at = (new Date).getTime()
-  this.wins = 0
-  this.losses = 0
-}
+// var User = function(){
+//   this.id = guid()
+//   this.created_at = (new Date).getTime()
+//   this.wins = 0
+//   this.losses = 0
+// }
+
+// User.unpack = function(raw_user){
+//   var u = new User()
+//   u.id = raw_user.id
+//   u.name = raw_user.name
+//   u.created_at = parseInt(raw_user.created_at, 10)
+//   u.last_connect = parseInt(raw_user.last_connect, 10)
+//   u.wins = parseInt(raw_user.wins, 10)
+//   u.losses = parseInt(raw_user.losses, 10)
+//   // u.socket_id = ???
+//   return u
+// }
 
 app.get('/', function (req, res) {
-  if (!req.session.user) {
+  var up = null
+  if (req.session.user_id) {
+    up = app.models.user.findOne({id: req.sess.user_id})
+  }else{
     console.log('New User! HTTP from:', req.ip)
-    req.session.user = new User()
+    up = app.models.user.create({})
   }
-  req.session.user.last_connect = (new Date).getTime()
-  res.render('index', {
-    user: req.session.user,
-    port: PORT
+  up.then(function (user){
+    return app.models.user.update({ id: user.id }, {
+      last_ip: req.ip,
+      last_connect: (new Date).getTime()
+    });
+  }).then(function (user){
+    req.session.user_id = user.id
+
+    res.render('index', {
+      user: user,
+      port: PORT
+    })
+  }).catch(function (err){
+    return res.json({ err: err }, 500);      
   })
-  // res.sendFile(__dirname + '/index.html');
 });
 
-var accounts = {};
-var players_lfg = [];
-var active_games = {};
+// TODO: make this a cache later on
+// var active_games = {};
 //a game looks like this:
 
 //to send data to a player do
@@ -100,6 +154,9 @@ var active_games = {};
 //a_socket.emit("some_key", "some_value");
 
 io.on('connection', function (socket) {
+  socket.on('herp', function(derp){
+    socket.emit('derp', derp);
+  });
   // BUG PATCH
   // http://stackoverflow.com/questions/25830415/get-the-list-of-rooms-the-client-is-currently-in-on-disconnect-event
   // https://github.com/Automattic/socket.io/issues/1814
@@ -111,42 +168,63 @@ io.on('connection', function (socket) {
 
     console.log('leaving:', socket.rooms)
     socket.rooms.forEach(function (roomname){
-      cleanup_potential_gameroom(roomname, socket.id)
+      if(socket.handshake.session.user){
+        var user_id = socket.handshake.session.user_id      
+        cleanup_potential_gameroom(roomname, user_id)
+      }
     })
     Object.getPrototypeOf(this).onclose.call(this,reason);
   }
 
+  var session_user_id = socket.handshake.session.user_id 
 
-  var session_user = socket.handshake.session.user 
-  if (!session_user) {
-    console.log('New User! websocket from:', socket.id)
-    session_user = new User()
-  }
-  // console.log('old user:', session_user);
-  session_user.last_connect = (new Date).getTime()
-  session_user.socket_id = socket.id
-  socket.handshake.session.user = session_user
-  socket.handshake.session.save()
-  console.log('socket connected! user:', socket.handshake.session.user);
-
-  socket.on('herp', function(derp){
-    socket.emit('derp', derp);
-  });
-
-  io.emit('status', io.sockets.sockets.length.toString()+' players online');
-
-  if (socket.handshake.session.user['name']) {
-    socket.emit('good_log_in', socket.handshake.session.user);
-    pay_attention(socket)
+  var up = null
+  if (session_user_id) {
+    up = app.models.user.findOne({id: session_user_id})
   }else{
-    socket.on('log_in', function(data){
-      socket.handshake.session.user.name = data['name']
-      socket.handshake.session.save()
-      socket.emit('good_log_in', socket.handshake.session.user);
-      pay_attention(socket)
-    });
+    console.log('New User! websocket from:', socket.id)
+    up = app.models.user.create({})
   }
+  up.then(function (user){
+    socket.handshake.session.user_id = user.id
+    socket.handshake.session.save()
+    return app.models.user.update({ id: user.id }, {
+      // TODO: look up how to pull IP from socket
+      // last_ip: req.ip,
+      last_connect: (new Date).getTime()
+    });
+  }).then(function (user){
+    console.log('socket connected! user:', user.name, user.id);
 
+    io.emit('status', io.sockets.sockets.length.toString()+' players online');
+
+    if (user.name && user.name.length > 0) {
+      socket.emit('good_log_in', user);
+      io.emit('server_broadcast', user.name+' connected!');
+      pay_attention(socket)
+    }
+    socket.on('log_in', function(data){
+      app.models.user.update({
+        id: socket.handshake.session.user_id
+      }, {
+        name: data['name']
+      }).then(function (user){
+        socket.emit('good_log_in', user);
+        io.emit('server_broadcast', user.name+' connected!');
+        pay_attention(socket)
+      }).catch(function (err){
+        console.error(err)
+        socket.disconnect()
+      })
+    });
+    set_basic_listeners(socket)
+  }).catch(function (err){
+    console.error(err)
+    socket.disconnect()
+  })
+});
+
+function set_basic_listeners(socket){
   socket.on('send_message', function(data){
     // validate contents of message
     if(!data || !data['user'] || !data['message'] || !data['roomname']){
@@ -156,7 +234,7 @@ io.on('connection', function (socket) {
     // validate target room
     if(data['roomname'] == "server-broadcast"){
       io.emit('message', data)
-    }else if (!io.sockets.adapter.rooms[data['roomname']] || !io.sockets.adapter.rooms[data['roomname']][data['user']['socket_id']]) {
+    }else if (socket.rooms.indexOf(data['roomname']) === -1 || !io.sockets.adapter.rooms[data['roomname']]) {
       console.log('malformed message, bad room', data)
       return
     }else{
@@ -178,7 +256,7 @@ io.on('connection', function (socket) {
 
     // });
   });
-});
+}
 
 function syncMatchmakers () {
   io.emit('status', countMatchMaking()+" in matchmaking")
@@ -192,18 +270,41 @@ function syncMatchmakers () {
 }
 
 function pay_attention(socket){
-  io.emit('server_broadcast', socket.handshake.session.user["name"]+' connected!');
-  search_for_match(socket)
+  app.models.game.find().where({
+    active: true,
+    or: [{
+      player1: socket.handshake.session.user_id,    
+    }, {
+      player2: socket.handshake.session.user_id,    
+    }]
+  }).populate('player1').populate('player2').populate('turns')
+  .then(function (active_games){
+    console.log(active_games.length)
+    socket.emit('left_room', 'matchmaking')
+    if(active_games.length > 0){
+      active_games.forEach(function (game){
+        game.reload(io)
+        game.set_listeners(socket)
+      })
+    }else{
+      search_for_match(socket)
+    }
+  })
+
+  // enable matchmaking
   socket.on('search_for_match', function(){
     search_for_match(socket)
   })
 
-
+  // enable leaving rooms
   socket.on('leave_room', function (roomname){
     // TODO
     // consider the consequences of allowing 
     // any user to leave any room
-    cleanup_potential_gameroom(roomname, socket.id)
+    if(socket.handshake.session.user_id){
+      var user_id = socket.handshake.session.user_id  
+      cleanup_potential_gameroom(roomname, user_id)
+    }
     socket.leave(roomname)
   })
 }
@@ -227,236 +328,296 @@ function guid() {
   return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
 }
 
-var Game = function (player1, player2){
-  this.player1 = player1
-  this.player2 = player2
-  this.totals = {}
-  this.totals[this.player1.id] = 0
-  this.totals[this.player2.id] = 0
-  this.id = guid()
-  this.active_player = player1
-  this.results_this_turn = []
-  this.disconnects = []
+// var Game = function (player1, player2){
+//   this.player1 = player1
+//   this.player2 = player2
+//   this.totals = {}
+//   this.totals[player1.id] = 0
+//   this.totals[player2.id] = 0
+//   this.id = guid()
+//   this.active_player_id = player1.id
+//   this.results_this_turn = []
+//   this.disconnects = []
+//   this.active = true
+//   // refactor this...
+//   // add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
+//   // add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
+//   // return g;
+// }
 
-  active_games[this.id] = this
-  // refactor this...
-  // add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
-  // add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
-  // return g;
-}
+// Game.prototype.storable = function(){
+//   return {
+//     id: this.id,
+//     player1: this.player1.id,
+//     player2: this.player2.id,
+//     totals_player1: this.totals[this.player1.id],
+//     totals_player2: this.totals[this.player2.id],
+//     active_player_id: this.active_player_id,
+//     winner_id: (this.winner_id ? this.winner_id : ""),
+//     loser_id: (this.loser_id ? this.loser_id : ""),
+//     disconnects: this.disconnects.join(','),
+//     last_socket: (this.last_socket ? this.last_socket : ""),
+//     last_action: (this.last_action ? this.last_action : ""),
+//     last_action_time: (this.last_action_time ? this.last_action_time : 0),
+//   }
+// }
 
-Game.prototype.sayHello = function() {
-  console.log("Hello, I'm a game", this);
-};
+// Game.unpack = function (game_obj){
+//   app.models.user.findOne()
+//   .where({id: game_obj.player1})
+//   .then(function (player1){
+//     var player2 = app.models.user.findOne()
+//     .where({id: game_obj.player2}).then(function (player2){
+//       return player2
+//     })
+//     return [player1, player2]
+//   }).spread(function (player1, player2){
+//     return new Promise(function (resolve, reject){
+//       var g = new Game(player1, player2)
+//       g.id = game_obj.id
+//       g.totals[player1.id] = game_obj.totals_player1
+//       g.totals[player2.id] = game_obj.totals_player2
+//       g.active_player_id = game_obj.active_player_id
+//       g.winner_id = game_obj.winner_id
+//       g.loser_id = game_obj.loser_id
+//       g.disconnects = game_obj.disconnects.split(',')
+//       g.last_socket = game_obj.last_socket
+//       g.last_action = game_obj.last_action
+//       g.last_action_time = parseInt(game_obj.last_action_time, 10)
+//       resolve(g)
+//     })
+//   })
+// }
 
-Game.prototype.emit = function(event_name, obj){
+// Game.prototype.sayHello = function() {
+//   console.log("Hello, I'm a game", this);
+// };
 
-  return io.to('game:'+this.id).emit(event_name, obj)
-}
+// Game.prototype.emit = function(event_name, obj){
+//   return io.to('game:'+this.id).emit(event_name, obj)
+// }
 
-Game.prototype.start = function(){
-  //tell the first player to start
-  this.emit('start_turn', this)
-}
+// Game.prototype.start = function(){
+//   //tell the first player to start
+//   this.emit('start_turn', this)
+// }
 
-Game.prototype.set_listeners = function(socket){
-  socket.on('derp', function(derp){
-    socket.emit('server_broadcast', derp);
-  });
-  socket.on('roll', function(game_id){
-    // TODO: validate the socket sending the roll
-    console.log(socket.id, 'rolling for game:'+game_id)
-    var game = validate_actionable(socket, 'roll', game_id)
-    if(!game){
-      return
-    }
-
-    game.roll()
-  });
-  socket.on('hold', function(game_id){
-    var game = validate_actionable(socket, 'hold', game_id)
-    if(!game){
-      return
-    }
-    game.hold()
-  });
-}
+// Game.prototype.set_listeners = function(socket){
+//   socket.on('derp', function(derp){
+//     socket.emit('server_broadcast', derp);
+//   });
+//   ['roll', 'hold'].forEach(function (a_name){
+//     socket.on(a_name, function(game_id){
+//       console.log(socket.id, a_name+'ing for game:'+game_id)
+//       validate_actionable(socket, a_name, game_id)
+//       .then(function (game){
+//         game[a_name]()
+//       })
+//     });
+//   })
+// }
 
 var validate_actionable = function(socket, action, game_id) {
-  var game = active_games[game_id]
-  if(!game){
-    console.error(socket.id, 'sent a ', action, ' to an inactive game', game_id)
+  return app.models.game.findOne({
+    id: game_id,
+    active: true
+  }).catch(function (err){
+    console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
     if(game_id.length > 5){
       socket.emit('leave_room', game_id)
     }
-    return false
-  }
+  }).then(function (game){
+    return new Promise(function (resolve, reject){
+      // TODO make sure this socket_id 
+      // is updated between disconnects
+      var acting_user_id = socket.handshake.session.user_id
+      if(acting_user_id != game.active_player){
+        console.error(socket.id, 'user:', acting_user_id, 'sent a ', action,', but its still', game.active_player, "\'s turn")
+        return reject(false)
+      }
 
-  if(socket.id != game.active_player.socket_id){
-    console.error(socket.id, 'sent a ', action,', but its still', game.active_player.socket_id, "\'s turn")
-    return false
-  }
-
-  // flood detection
-  // milliseconds
-  var RATE_LIMIT = 90
-  if(game.last_socket && game.last_action && game.last_action_time){
-    if(game.last_socket == socket.id && game.last_action == action){
-      var new_time = (new Date).getTime()
-      if(game.last_action_time > (new_time - RATE_LIMIT) ){
-        console.error(socket.id, 'is flooding with', action, 'at', new_time)
-        return false
+      // flood detection
+      // milliseconds
+      // this also "fixes" a bug that causes clients to emit
+      // twice every time they send for some reason
+      var RATE_LIMIT = 90
+      if(game.last_player_id == acting_user_id && game.last_action == action){
+        var new_time = (new Date).getTime()
+        if(game.last_action_time > (new_time - RATE_LIMIT) ){
+          console.error(socket.id, 'is flooding with', action, 'at', new_time)
+          return reject(false)
+        }else{
+          console.log('action was long enough after to avoid rate limit')
+        }
       }else{
-        console.log('action was long enough after to avoid rate limit')
+        // console.log('new action, or socket, rate limit ignored')
       }
-    }else{
-      console.log('new action, or socket, rate limit ignored')
-    }
-  }else{
-    console.log('no last action, rate limit ignored')
-  }
 
-  game.last_socket = socket.id
-  game.last_action = action
-  game.last_action_time = (new Date).getTime()    
-  return game
+      game.last_player_id = socket.id
+      game.last_action = action
+      game.last_action_time = (new Date).getTime()
+      resolve(game)
+    }).catch(function (err){
+      console.error(err)
+      return
+    }).then(function (game){
+      return game.save()
+    })
+  })
 };
 
-Game.prototype.storable = function(){
-  return {
-    id: this.id,
-    player1: this.player1.id,
-    player2: this.player2.id,
-    totals_player1: this.totals[this.player1.id],
-    totals_player2: this.totals[this.player2.id],
-    winner: (this.winner ? this.winner.id : ""),
-    loser: (this.loser ? this.loser.id : ""),
-    disconnects: this.disconnects.join(',')
+
+function cleanup_potential_gameroom(roomname, leaver_id){
+  if(roomname.substring(0, 5) !== 'game:'){
+    return
   }
+  console.log('cleaning up a done game here:', roomname)
+  var game_id = roomname.substring(5)
+  return app.models.game.findOne({
+    id: game_id
+  }).catch(function (err){
+    console.error(err, "no game found with id:"+game_id)
+  }).then(function (game){
+    game.leaver(leaver_id)
+  })
 }
 
-function cleanup_potential_gameroom(roomname, socket_id){
-  if(roomname.substring(0, 5) === 'game:'){
-    console.log('cleaning up a done game here:', roomname)
-    var game = active_games[roomname.substring(5)]
-    if(game){
-      game.leaver(socket_id)
-    }
-  }
-}
+// Game.prototype.leaver = function(user_id) {
+//   this.disconnects.push(user_id)
+//   if(this.disconnects.length == 1){
+//     // only 1 disconnect....
+//     // TODO: give like 30 seconds to reconnect
+//     // could use a setTimeout?
+//     if(!this.winner_id || this.winner_id.length == 0){
+//       if (this.player1.id == user_id) {
+//         this.declare_winner(this.player2.id)
+//       }else if(this.player2.id == user_id){
+//         this.declare_winner(this.player1.id)
+//       }
+//     }
+//   }else if(this.disconnects.length == 2){
+//     this.active = false
+//     this.save()
+//   }
+// }
 
-Game.prototype.leaver = function(socket_id) {
-  this.disconnects.push(socket_id)
-  if(this.disconnects.length == 1){
-    // only 1 disconnect....
-    // TODO: give like 30 seconds to reconnect
-    // could use a setTimeout?
-    if(!this.winner){
-      if (this.player1.socket_id == socket_id) {
-        this.declare_winner(this.player2)
-      }else if(this.player2.socket_id == socket_id){
-        this.declare_winner(this.player1)
-      }
-    }
-  }else if(this.disconnects.length == 2){
-    redis_client.hmset("finishedgame:"+this.id, this.storable())
-    delete active_games[this.id]
-  }
-}
+// Game.prototype.save = function(){
+//   redis_client.hmset("game:"+this.id, this.storable())  
+// }
 
-Game.prototype.declare_winner = function(player) {
-  //set player won
-  console.log('declaring', player, 'winner')
+// Game.prototype.declare_winner = function(player_id) {
+//   var self = this
+//   return new Promise(function (resolve, reject){
+//     redis_client.hgetall('user:'+player_id, function (err, returned){
+//       if(err){
+//         return reject(err)
+//       }
+//       resolve(User.unpack(returned))
+//     })
+//     // TODO: catch missing player
+//   }).then(function (player){
+//     //set player won
+//     return new Promise(function (resolve, reject){
+//       console.log('declaring', player, 'winner')
 
-  this.winner = player;
-  this.loser = this.player1.id == this.winner.id ? this.player2 : this.player1
-  io.sockets.adapter.rooms['game:'+this.id]
-  
-  var winner_socket = io.sockets.connected[this.winner.socket_id]
+//       var winner = player;
+//       var loser_id = self.player1.id == winner.id ? self.player2.id : self.player1.id
+//       redis_client.hgetall('user:'+loser_id, function (err, returned){
+//         if(err){
+//           return reject(err)
+//         }
+//         resolve(winner, User.unpack(returned))
+//       })
+//     })
+//     // TODO: catch missing loser
+//   }).then(function (winner, loser){
+//     self.winner_id = winner.id
+//     self.loser_id = loser.id
 
-  this.winner = winner_socket.handshake.session.user
-  this.winner.wins = 1 + (this.winner['wins'] ? this.winner.wins : 0)
-  winner_socket.handshake.session.user = this.winner
-  winner_socket.handshake.session.save()
+//     winner.wins = 1 + (winner['wins'] ? winner.wins : 0)
+//     loser.losses = 1 + (loser['losses'] ? loser.losses : 0)
 
-  var loser_socket = io.sockets.connected[this.loser.socket_id]
+//     console.log(winner.name, 'wins', loser.name, 'loses')
+//     self.emit('game_end', self);
+//     self.save()
+//     redis_client.hmset('user:'+winner.id, winner, function (err, result){
+//       if(err){
+//         return console.error(err)
+//       }
+//     })
+//     redis_client.hmset('user:'+loser.id, loser, function (err, result){
+//       if(err){
+//         return console.error(err)
+//       }
+//     })
+//   })
+// };
 
-  this.loser = loser_socket.handshake.session.user
-  this.loser.losses = 1 + (this.loser['losses'] ? this.loser.losses : 0)
-  loser_socket.handshake.session.user = this.loser
-  loser_socket.handshake.session.save()
+// Game.prototype.between_turns = function(){
+//   this.results_this_turn = [];
+//   var total = this.totals[this.active_player_id];
+//   if(total >= 20){
+//     this.declare_winner(this.active_player_id)
+//     // move this over to another hash? out of active games?
+//   }else{
+//     //no winner yet
+//     //tell the current player to start his t
+//     if(this.active_player_id == this.player1.id){
+//       this.active_player_id = this.player2.id
+//     }else{
+//       this.active_player_id = this.player1.id
+//     }
+//     this.emit('start_turn', this)
+//     this.save()
+//   }
+// }
 
-  console.log(this.winner.name, 'wins', this.loser.name, 'loses')
-  this.emit('game_end', this);
+// Game.prototype.roll = function(){
+//   var roll_result = {};
+//   roll_result['game_id'] = this.id
+//   roll_result['roller'] = this.active_player_id;
 
-  // individuals will leave the room on their own
-  // winner_socket.leave('game:'+this.id)
-  // loser_socket.leave('game:'+this.id)
-  // body...
-};
+//   roll_result["first"] = 1 + Math.floor(Math.random() * 6);
+//   roll_result["second"] = 1 + Math.floor(Math.random() * 6);
+//   roll_result["roll_result"] = (roll_result["first"] + roll_result["second"]).toString();
+//   if(roll_result["first"] == 1 || roll_result["second"] == 1){
+//     roll_result["bust"] = true;
+//   }else{
+//     roll_result["bust"] = false;
+//   }
 
-Game.prototype.between_turns = function(){
-  this.results_this_turn = [];
-  var total = this.totals[this.active_player.id];
-  if(total >= 20){
-    this.declare_winner(this.active_player)
-    // move this over to another hash? out of active_games?
-  }else{
-    //no winner yet
-    //tell the current player to start his t
-    if(this.active_player.id == this.player1.id){
-      this.active_player = this.player2
-    }else{
-      this.active_player = this.player1
-    }
-    this.emit('start_turn', this)
-  }
-}
+//   console.log((new Date).getTime(), this.active_player_id, 'rolled', roll_result)
 
-Game.prototype.roll = function(){
-  var roll_result = {};
-  roll_result['game_id'] = this.id
-  roll_result['roller'] = this.active_player.name;
+//   this.last_roll = roll_result
 
-  roll_result["first"] = 1 + Math.floor(Math.random() * 6);
-  roll_result["second"] = 1 + Math.floor(Math.random() * 6);
-  roll_result["roll_result"] = (roll_result["first"] + roll_result["second"]).toString();
-  if(roll_result["first"] == 1 || roll_result["second"] == 1){
-    roll_result["bust"] = true;
-  }else{
-    roll_result["bust"] = false;
-  }
+//   if(!roll_result["bust"]){
+//     this["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
+//   }
+//   this.last_total = this.turn_total()
+//   this.emit('roll_result', this);
 
-  console.log((new Date).getTime(), this.active_player.name, 'rolled', roll_result)
+//   if(roll_result['bust']) {
+//     this.between_turns();
+//   }else{
+//     this.save()
+//   }
+// }
 
-  this.last_roll = roll_result
+// Game.prototype.hold = function(){
+//   var total = this.turn_total();
+//   this.last_total = total
+//   this['totals'][this.active_player_id] += total;
+//   this.emit('hold_result', this);
+//   this.between_turns();
+// }
 
-  if(!roll_result["bust"]){
-    this["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
-  } 
-  this.last_total = this.turn_total()
-  this.emit('roll_result', this);
-
-  if(roll_result['bust']) {
-    this.between_turns();
-  }
-}
-
-Game.prototype.hold = function(){
-  var total = this.turn_total();
-  this.last_total = total
-  this['totals'][this.active_player.id] += total;
-  this.emit('hold_result', this);
-  this.between_turns();
-}
-
-Game.prototype.turn_total = function(){
-  var total = 0;
-  this['results_this_turn'].forEach(function(r) {
-    total += r;
-  });
-  return total;
-}
+// Game.prototype.turn_total = function(){
+//   var total = 0;
+//   this['results_this_turn'].forEach(function(r) {
+//     total += r;
+//   });
+//   return total;
+// }
 
 var isMatchmaking = false;
 var match_maker;
@@ -510,8 +671,9 @@ function match_make(){
     game.set_listeners(player1_socket)
     game.set_listeners(player2_socket)
     // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
-    if(countMatchMaking().length > 0){
-      var cool_number = 200/players_lfg.length;
+    players_lfg_length = countMatchMaking()
+    if(players_lfg_length > 0){
+      var cool_number = 200/players_lfg_length;
       if(cool_number < 2){
         cool_number = 2;
       }
@@ -532,4 +694,13 @@ function match_make(){
 //kill matchmaking with 
 //clearTimeout(match_maker);
 
-server.listen(PORT);
+orm.initialize(config, function (err, models) {
+  if(err) throw err;
+
+  app.models = models.collections;
+  app.connections = models.connections;
+
+  server.listen(PORT);
+
+  console.log("To see saved users, visit http://localhost:"+PORT);
+})
