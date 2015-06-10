@@ -76,6 +76,9 @@ var Game = Waterline.Collection.extend({
     },
 
     start: function(io){
+      this.emit(io, 'create_game', this)
+      this.emit(io, 'joined_room', 'game:'+this.id)
+      this.emit(io, 'left_room', 'matchmaking')
       this.emit(io, 'start_turn', this)
     },
 
@@ -160,7 +163,7 @@ var Game = Waterline.Collection.extend({
         new_active_player = this.player1
       }
 
-      this.update({
+      this.spread({
         active_player: new_active_player
       }).catch(function (err){
         console.error(err, 'failed to set new active player')
@@ -206,7 +209,9 @@ var Game = Waterline.Collection.extend({
         })
         // TODO: this needs testing
         return [game, winner.save(), loser.save()]
-      }).spread(function (game, winner, loser){
+      }).spread(function (games, winner, loser){
+        // .update always resolves to an array
+        var game = games[0]
         console.log(winner.name, 'wins', loser.name, 'loses')
         // TODO: do we need to populate anything?
         io.emit('game_end', game)
@@ -222,7 +227,11 @@ var Game = Waterline.Collection.extend({
         this.save()
       }
     }
-  }
+  },
+  // // 'class' methods
+  // assemble: function(player1_id, player2_id){
+  // },
+
 });
 
 module.exports = Game

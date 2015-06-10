@@ -10,8 +10,16 @@ var User = Waterline.Collection.extend({
     created_at: 'integer',
     last_connect: 'integer',
     last_ip: 'string',
-    wins: 'integer',
-    losses: 'integer',
+    
+    wins: {
+      type: 'integer',
+      defaultsTo: 0
+    },
+    
+    losses: {
+      type: 'integer',
+      defaultsTo: 0
+    },
 
     games_hosted: {
       collection: 'game',

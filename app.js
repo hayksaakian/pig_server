@@ -33,6 +33,7 @@ var socketio = require('socket.io')
 console.log('GOOD SOCKET.IO IMPORT')
 var io = socketio(server);
 
+var Promise = require('bluebird')
 var Waterline = require('waterline')
 var bodyParser = require('body-parser')
 var methodOverride = require('method-override')
@@ -50,9 +51,9 @@ var config = {
     redis: redisAdapter
   },
   connections: {
-    myLocalRedis: {
+    myRedis: {
       adapter: 'redis',
-      database: 7
+      database: 9
     }
   },
   defaults: {}
@@ -64,8 +65,8 @@ orm.loadCollection(require('./models/Turn'))
 
 
 var make_redis_client = require('./make_redis_client')
-var session_client = make_redis_client(7)
-var redis_client = make_redis_client(8)
+var session_client = make_redis_client(10)
+// var redis_client = make_redis_client(8)
 var cookieParser = require('cookie-parser');
 console.log('STARTED HANDSHAKE SOCKET.IO IMPORT')
 var socketHandshake = require('socket.io-handshake');
@@ -74,7 +75,8 @@ console.log('GOOD HANDSHAKE SOCKET.IO IMPORT')
 var session = require('express-session');
 var RedisStore = require('connect-redis')(session);
 var sessionStore = new RedisStore({
-  "client": session_client
+  "client": session_client,
+  db: 10
 })
 
 // TODO: change settings if we want to handle secure cookies explicitly
@@ -83,6 +85,7 @@ var sessionStore = new RedisStore({
 //   app.set('trust proxy', 1) // trust first proxy
 //   sess.cookie.secure = true // serve secure cookies
 // }
+
 var sessionSettings = {
   store: sessionStore,
   // cookie: { maxAge: 60000*60*24*30 }
@@ -120,28 +123,53 @@ io.use(socketHandshake(sessionSettings))
 //   return u
 // }
 
+app.get('/counter', function (req, res){
+  console.log(req.session)
+  if(!req.session.counter){
+    req.session.counter = 0
+  }
+  req.session.counter = req.session.counter + 1
+  req.session.save(function (err){
+    res.status(200).json(req.session)  
+  })
+})
+
 app.get('/', function (req, res) {
   var up = null
+  console.log(req.session.user_id)
   if (req.session.user_id) {
-    up = app.models.user.findOne({id: req.sess.user_id})
+    up = app.models.user.findOne({id: req.session.user_id})
   }else{
     console.log('New User! HTTP from:', req.ip)
     up = app.models.user.create({})
   }
   up.then(function (user){
+    // console.log('found a user', user)
     return app.models.user.update({ id: user.id }, {
       last_ip: req.ip,
       last_connect: (new Date).getTime()
     });
-  }).then(function (user){
+  }).spread(function (user){
+    // console.log('updated a user', user)
     req.session.user_id = user.id
-
+    return new Promise(function (resolve, reject){
+      req.session.save(function (err){
+        // console.log('http session', req.session)
+        if (err) {
+          return reject(err)
+        }
+        resolve(user)
+      })
+    })
+  }).catch(function (err){
+    console.error('failed to save user', err)
+    res.status(500).json({ err: err });      
+  }).then(function (user){
+    // console.log('sending user', user)
     res.render('index', {
       user: user,
       port: PORT
     })
-  }).catch(function (err){
-    return res.json({ err: err }, 500);      
   })
 });
 
@@ -154,6 +182,7 @@ app.get('/', function (req, res) {
 //a_socket.emit("some_key", "some_value");
 
 io.on('connection', function (socket) {
+  // console.log(socket.id+' connected')
   socket.on('herp', function(derp){
     socket.emit('derp', derp);
   });
@@ -168,7 +197,7 @@ io.on('connection', function (socket) {
 
     console.log('leaving:', socket.rooms)
     socket.rooms.forEach(function (roomname){
-      if(socket.handshake.session.user){
+      if(socket.handshake.session.user_id){
         var user_id = socket.handshake.session.user_id      
         cleanup_potential_gameroom(roomname, user_id)
       }
@@ -176,8 +205,8 @@ io.on('connection', function (socket) {
     Object.getPrototypeOf(this).onclose.call(this,reason);
   }
 
+  // console.log('Socket Session', socket.handshake.session)
   var session_user_id = socket.handshake.session.user_id 
-
   var up = null
   if (session_user_id) {
     up = app.models.user.findOne({id: session_user_id})
@@ -186,19 +215,32 @@ io.on('connection', function (socket) {
     up = app.models.user.create({})
   }
   up.then(function (user){
+    // console.log('updating user in websocket', user)
     socket.handshake.session.user_id = user.id
-    socket.handshake.session.save()
-    return app.models.user.update({ id: user.id }, {
+    return new Promise(function (resolve, reject){
+      socket.handshake.session.save(function (err){
+        // console.log('saved sesson:', socket.handshake.session)
+        if(err){
+          return reject(err)
+        }
+        resolve(user)
+      })      
+    })
+  }).then(function (user){
+    // console.log('setting last_connect for', user)
+    return app.models.user.update({id: user.id}, {
       // TODO: look up how to pull IP from socket
       // last_ip: req.ip,
       last_connect: (new Date).getTime()
     });
-  }).then(function (user){
-    console.log('socket connected! user:', user.name, user.id);
+  }).spread(function (user){
+    // console.log('socket connected! user:', user);
+    console.log('socket connected!', 'user.name:',user.name, 'user.id:', user.id, 'socket_id:', socket.id);
 
     io.emit('status', io.sockets.sockets.length.toString()+' players online');
 
     if (user.name && user.name.length > 0) {
+      console.log('good log in', user)
       socket.emit('good_log_in', user);
       io.emit('server_broadcast', user.name+' connected!');
       pay_attention(socket)
@@ -208,7 +250,7 @@ io.on('connection', function (socket) {
         id: socket.handshake.session.user_id
       }, {
         name: data['name']
-      }).then(function (user){
+      }).spread(function (user){
         socket.emit('good_log_in', user);
         io.emit('server_broadcast', user.name+' connected!');
         pay_attention(socket)
@@ -262,11 +304,15 @@ function syncMatchmakers () {
   io.emit('status', countMatchMaking()+" in matchmaking")
   var in_mm = Object.keys(io.sockets.adapter.rooms['matchmaking'] || {})
   console.log(in_mm)
-  var users = in_mm.map(function (socketId){
-    return io.sockets.connected[socketId].handshake.session.user
+  var user_ids = in_mm.map(function (socketId){
+    return io.sockets.connected[socketId].handshake.session.user_id
   })
-  console.log('in matchmaking:', users)
-  io.to('matchmaking').emit('matchmaking_list', users)
+  app.models.user.find().where({
+    id: user_ids
+  }).then(function (users){
+    console.log('in matchmaking:', users)
+    io.to('matchmaking').emit('matchmaking_list', users)
+  })
 }
 
 function pay_attention(socket){
@@ -642,46 +688,49 @@ function match_make(){
     player2_socket_id = all_matchmakers[1]
 
     var player1_socket = io.sockets.connected[player1_socket_id]
-    var player1 = player1_socket.handshake.session.user
+    var player1_id = player1_socket.handshake.session.user_id
 
     var player2_socket = io.sockets.connected[player2_socket_id]    
-    var player2 = player2_socket.handshake.session.user
+    var player2_id = player2_socket.handshake.session.user_id
 
-    console.log('making a game with', player1, 'and', player2)
-    var game = new Game(player1, player2);
-    
-    player1_socket.leave('matchmaking')
-    player2_socket.leave('matchmaking')
+    console.log('making a game with', player1_id, 'and', player2_id)
 
-    syncMatchmakers()
+    app.models.game.create({
+      player1: player1_id,
+      player2: player2_id,
+      active_player: player1_id
+    }).then(function (game){
+      return app.models.game.findOne({id: game.id}).populate('player1').populate('player2').populate('active_player')
+    }).then(function (game){
+      console.log('made a game with', game.player1, 'and', game.player2)
+      // var game = new Game(player1, player2);
+      
+      player1_socket.leave('matchmaking')
+      player2_socket.leave('matchmaking')
 
-    player1_socket.join('game:'+game.id)
-    player2_socket.join('game:'+game.id)
+      syncMatchmakers()
 
-    // console.log(player1);
-    // console.log(player2);
-    game.emit('create_game', game)
-    game.emit('joined_room', 'game:'+game.id)
-    game.emit('left_room', 'matchmaking')
-    // io.to(player1["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player2["name"]});
-    // io.to(player2["socket_id"]).emit('create_game', {"game_id":game['id'], "opponents_name":player1["name"]});
-    
-    //socket1 socket2 game_id, starting_player
-    game.start()
-    game.set_listeners(player1_socket)
-    game.set_listeners(player2_socket)
-    // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
-    players_lfg_length = countMatchMaking()
-    if(players_lfg_length > 0){
-      var cool_number = 200/players_lfg_length;
-      if(cool_number < 2){
-        cool_number = 2;
-      }
-      console.log('re-queueing matchmaking in', cool_number, 'ms')
-      match_maker = setTimeout(match_make, cool_number);
-    }else{
-      isMatchmaking = false;
-    }
+      player1_socket.join('game:'+game.id)
+      player2_socket.join('game:'+game.id)
+
+      game.start(io)
+      game.set_listeners(player1_socket)
+      game.set_listeners(player2_socket)
+    }).finally(function () {
+      // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
+      players_lfg_length = countMatchMaking()
+      if(players_lfg_length > 0){
+        var cool_number = 200/players_lfg_length;
+        if(cool_number < 2){
+          cool_number = 2;
+        }
+        console.log('re-queueing matchmaking in', cool_number, 'ms')
+        match_maker = setTimeout(match_make, cool_number);
+      }else{
+        isMatchmaking = false;
+      }      
+    })
+
   }else if(players_lfg_length == 1){
     console.log('stopping matchmaking', 'so alone DaFeels')
     isMatchmaking = false;

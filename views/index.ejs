@@ -72,11 +72,11 @@
             </a>
           </li>
           <li>
-            <a href="#" id="wins"><%= (user && user['wins'] ? user.wins : '') %> Wins
+            <a href="#" id="wins"><%= (user && user.hasOwnProperty('wins') ? user.wins : '') %> Wins
             </a>
           </li>
           <li>
-            <a href="#" id="losses"><%= (user && user['losses'] ? user.losses : '') %> Losses
+            <a href="#" id="losses"><%= (user && user.hasOwnProperty('losses') ? user.losses : '') %> Losses
             </a>
           </li>
         </ul>
@@ -257,8 +257,10 @@
 
       socket.on('matchmaking_list', function (list){
         $('#matchmaking').html('<ul id="mmlist"></ul>')
+        // console.log(list)
         list.forEach(function (i){
-          $('#mmlist').append('<li><span data-toggle="tooltip" data-placement="top" title="'+i.id+'">'+i['name']+'</span></li>')
+          // console.log(i)
+          $('#mmlist').append('<li><span data-toggle="tooltip" data-placement="top" title="'+i.id+'">'+i['name']+' W:'+i['wins']+' L:'+i['losses']+'</span></li>')
         })
         $('[data-toggle="tooltip"]').tooltip()
       })
