@@ -321,8 +321,8 @@
 
       socket.on('start_turn', function (game){
         // TODO
-        addMessageToRoom(game.active_player_id+" starts their turn", 'game:'+game.id)
-        if(game.active_player_id == user.id){
+        addMessageToRoom(game.active_player.id+" starts their turn", 'game:'+game.id)
+        if(game.active_player.id == user.id){
           // our turn
           // show actions
           if($('#'+game.id+' .gameactions').children().length == 0){
@@ -336,15 +336,15 @@
           // opponent turn
           // show "waiting for opponent"
         }
-        $('#'+game.id+' .'+game.active_player_id+'.turns').append("<li class='turn'><span class='turn_total'></span></li>")
-        console.log('start_turn', game.active_player_id)
+        $('#'+game.id+' .'+game.active_player.id+'.turns').append("<li class='turn'><span class='turn_total'></span></li>")
+        console.log('start_turn', game.active_player.id)
       })
       socket.on('roll_result', function (game){
         // TODO
-        addMessageToRoom(game.active_player_id+" rolls "+game.last_roll['first']+" "+game.last_roll['second'], 'game:'+game.id)
+        addMessageToRoom(game.active_player.id+" rolls "+game.last_roll['first']+" "+game.last_roll['second'], 'game:'+game.id)
         console.log('roll_result', game.last_roll)
 
-        var li = $('#'+game.id+" ."+game.active_player_id+".turns").children().last()
+        var li = $('#'+game.id+" ."+game.active_player.id+".turns").children().last()
         var first_roll = DIE_MAP[game.last_roll['first']-1]
         var second_roll = DIE_MAP[game.last_roll['second']-1]
         if(li.text().length > 0){
@@ -361,13 +361,13 @@
       socket.on('hold_result', function (game){
         // TODO
         // add to score total for this player?
-        var overallscore = game.totals[game.active_player_id]
+        var overallscore = game.totals[game.active_player.id]
         console.log(game.totals)
-        // var td = $('#'+game.id+" ."+game.active_player_id+".turns").children().last().append("= "+total)
-        $('#'+game.id+" ."+game.active_player_id+" .score").text(overallscore)
+        // var td = $('#'+game.id+" ."+game.active_player.id+".turns").children().last().append("= "+total)
+        $('#'+game.id+" ."+game.active_player.id+" .score").text(overallscore)
 
         var total = game.last_total
-        addMessageToRoom(game.active_player_id+" holds on to "+total+' points', 'game:'+game.id)
+        addMessageToRoom(game.active_player.id+" holds on to "+total+' points', 'game:'+game.id)
         console.log('hold_result', total)
       })
 

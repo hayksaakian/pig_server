@@ -330,7 +330,7 @@ function pay_attention(socket){
     if(active_games.length > 0){
       active_games.forEach(function (game){
         game.reload(io)
-        game.set_listeners(socket)
+        game.set_listeners(socket, validate_actionable)
       })
     }else{
       search_for_match(socket)
@@ -464,16 +464,27 @@ function guid() {
 // }
 
 var validate_actionable = function(socket, action, game_id) {
+  console.log("looking for game:", game_id)
   return app.models.game.findOne({
     id: game_id,
     active: true
-  }).catch(function (err){
+  }).populate('player1').populate('player2').populate('active_player').populate('turns', {sort: 'createdAt DESC'})
+  .catch(function (err){
     console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
     if(game_id.length > 5){
       socket.emit('leave_room', game_id)
     }
   }).then(function (game){
+    console.log("found game", game)
     return new Promise(function (resolve, reject){
+      if(!game){
+        console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
+        if(game_id.length > 5){
+          socket.emit('leave_room', game_id)
+        }
+        return reject(false)
+      }
+
       // TODO make sure this socket_id 
       // is updated between disconnects
       var acting_user_id = socket.handshake.session.user_id
@@ -503,11 +514,11 @@ var validate_actionable = function(socket, action, game_id) {
       game.last_action = action
       game.last_action_time = (new Date).getTime()
       resolve(game)
+    }).then(function (game){
+      return game.save()
     }).catch(function (err){
       console.error(err)
       return
-    }).then(function (game){
-      return game.save()
     })
   })
 };
@@ -714,8 +725,8 @@ function match_make(){
       player2_socket.join('game:'+game.id)
 
       game.start(io)
-      game.set_listeners(player1_socket)
-      game.set_listeners(player2_socket)
+      game.set_listeners(player1_socket, validate_actionable)
+      game.set_listeners(player2_socket, validate_actionable)
     }).finally(function () {
       // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
       players_lfg_length = countMatchMaking()

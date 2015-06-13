@@ -25,7 +25,7 @@ var Game = Waterline.Collection.extend({
     
     active: {
       type: 'boolean',
-      defaultsTo: false,
+      defaultsTo: true,
       index: true
     },
 
@@ -69,7 +69,9 @@ var Game = Waterline.Collection.extend({
       via: 'game'
     },
 
-    disconnects: 'array',
+    disconnects: {
+      type: 'array'
+    },
 
     emit: function(io, event_name, obj){
       return io.to('game:'+this.id).emit(event_name, obj)
@@ -83,7 +85,8 @@ var Game = Waterline.Collection.extend({
     },
 
     reload: function(io){
-      this.populate('player1')
+      Game.findOne({id: this.id})
+      .populate('player1')
       .populate('player2')
       .populate('turns', {sort: 'createdAt DESC'})
       .then(function (game){
@@ -92,14 +95,14 @@ var Game = Waterline.Collection.extend({
       })
     },
 
-    set_listeners: function(socket){
+    set_listeners: function(socket, validator){
       // socket.on('derp', function(derp){
       //   socket.emit('server_broadcast', derp);
       // });
       ['roll', 'hold'].forEach(function (action){
         socket.on(action, function(game_id){
           console.log(socket.id, action+'ing for game:'+game_id)
-          validate_actionable(socket, action, game_id)
+          validator(socket, action, game_id)
           .then(function (game){
             game[action]()
           })
@@ -108,7 +111,10 @@ var Game = Waterline.Collection.extend({
     },
 
     roll: function(io){
-      this.populate('turns', {sort: 'createdAt DESC'})
+      Game.findOne({id: this.id})
+      .populate('player1')
+      .populate('player2')
+      .populate('turns', {sort: 'createdAt DESC'})
       .then(function (game){
         var turn = game.turns[0]
         turn.roll().then(function (turn){
@@ -125,7 +131,8 @@ var Game = Waterline.Collection.extend({
     },
 
     hold: function(io){
-      this.populate('turns', {sort: 'createdAt DESC'})
+      Game.findOne({id: this.id})
+      .populate('turns', {sort: 'createdAt DESC'})
       .then(function (game) {
         var turn = game.turns[0]
         // turn.hold()
@@ -183,7 +190,8 @@ var Game = Waterline.Collection.extend({
     
     },
     declare_winner: function(io, winner_id){
-      this.populate('player1').populate('player2')
+      Game.findOne({id: this.id})
+      .populate('player1').populate('player2')
       .then(function (game){
         var loser_id = null
         var winner = null
@@ -219,6 +227,10 @@ var Game = Waterline.Collection.extend({
     },
 
     leaver: function(user_id){
+      if(!this.disconnects){
+        this.disconnects = []
+      }
+
       if(this.disconnects.indexOf(user_id) !== -1){
         this.disconnects.push(user_id)      
       }
@@ -226,7 +238,7 @@ var Game = Waterline.Collection.extend({
         this.active = false
         this.save()
       }
-    }
+    },
   },
   // // 'class' methods
   // assemble: function(player1_id, player2_id){
