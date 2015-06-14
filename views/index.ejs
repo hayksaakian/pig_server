@@ -50,6 +50,10 @@
         bottom: 0;
         margin: 8px;
       }
+
+      .red {
+        color: red;
+      }
     </style>
   </head>
   <body>
@@ -136,7 +140,7 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
       var DIE_MAP = [
-        "<i class='fi-die-one large'></i>",
+        "<i class='fi-die-one large red'></i>",
         "<i class='fi-die-two large'></i>",
         "<i class='fi-die-three large'></i>",
         "<i class='fi-die-four large'></i>",
@@ -157,7 +161,9 @@
       var user = <%- user ? JSON.stringify(user) : null %>;
       var socket = io.connect(':'+<%= port %>);
       socket.on('disconnect', function(){
-        $('#main').prepend("<button onClick='(window || document).location.reload(true)' class='btn btn-danger'>LOST Connection to Server, click here to reload. Game state is not saved between server resets</button>")
+        if($('#refreshbtn').length == 0){
+          $('#main').prepend("<button id='refreshbtn' onClick='(window || document).location.reload(true)' class='btn btn-danger'>LOST Connection to Server, click here to reload.</button>")        
+        }
       })
 
 
@@ -269,16 +275,24 @@
         // TODO
         console.log('create_game', g)
         $('#search_for_match').text("Start another Game")
-
+        ensureGame(g)
+        $("#search_for_match").prop("disabled", false)
+      })
+      
+      function ensureGame(g){
+        if($('#'+g.id+".game").length > 0){
+          return
+        }
+        console.log('user ids', user.id, g.player1.id, g.player2.id)
         var score_template = '<div class="row"><div class="col-md-6"><ul class="unstyled '+g.player1.id+' turns">'+
           '<li><span data-placement="top" data-toggle="tooltip" title="'+g.player1.id+'" class="name">'+
           g.player1.name+
-          '</span> <span class="score">0</span></li></ul>'+
+          '</span> <span class="score">'+g.totals_player1+'</span></li></ul>'+
           (g.player1.id == user.id ? '<div class="gameactions"></div>': "")+
           '</div>'+
           '<div class="col-md-6"><ul class="unstyled '+g.player2.id+' turns"><li><span data-placement="top" data-toggle="tooltip" title="'+g.player2.id+'" class="name" >'+
           g.player2.name+
-          '</span> <span class="score">0</span></li>'+
+          '</span> <span class="score">'+g.totals_player2+'</span></li>'+
           '</ul>'+
           (g.player2.id == user.id ? '<div class="gameactions"></div>': "")+
           '</div></div>'
@@ -287,9 +301,12 @@
           '</div></div>'
         
         $('#games').append(main_template)
+        g.turns.forEach(function(turn){
+          ensureTurn(g, turn)
+        })
+
         $('[data-toggle="tooltip"]').tooltip()
-        $("#search_for_match").prop("disabled", false)
-      })
+      }
       
       $( document ).on( "click", "#search_for_match", function() {
         console.log($(this))
@@ -301,9 +318,14 @@
         console.log($(this), 'rollbtn')
         var game_id = $(this).closest('.game').attr('id')
         console.log('rolling on', game_id)
-        socket.emit('roll', game_id)
+        socket.emit('game:'+game_id, 'roll')
       });
 
+      $( document ).on( "click", ".holdbtn", function() {
+        var game_id = $(this).closest('.game').attr('id')
+        console.log('holding on', game_id)
+        socket.emit('game:'+game_id, 'hold')
+      });
 
       $( document ).on( "click", ".closebtn", function() {
         console.log($(this))
@@ -313,69 +335,91 @@
         $('#'+game_id+".game").remove()
       });
 
-      $( document ).on( "click", ".holdbtn", function() {
-        var game_id = $(this).closest('.game').attr('id')
-        console.log('holding on', game_id)
-        socket.emit('hold', game_id)
-      });
+
+      socket.on('reload_game', function (game) {
+        console.log('reloading game', game.id, game)
+        ensureGame(game)
+      })
 
       socket.on('start_turn', function (game){
         // TODO
-        addMessageToRoom(game.active_player.id+" starts their turn", 'game:'+game.id)
-        if(game.active_player.id == user.id){
+        addMessageToRoom(game.active_player+" starts their turn", 'game:'+game.id)
+        if(game.active_player == user.id){
           // our turn
           // show actions
-          if($('#'+game.id+' .gameactions').children().length == 0){
-            $('#'+game.id+' .gameactions').html('<button class="btn rollbtn">Roll</button> <button class="btn holdbtn">Hold</button>')
+          if($('#'+game.id+'.game .gameactions').children().length == 0){
+            $('#'+game.id+'.game .gameactions').html('<button class="btn rollbtn">Roll</button> <button class="btn holdbtn">Hold</button>')
             console.log('generating game actions')
           }
           console.log('showing game actions')
-          $('#'+game.id+' .gameactions').show()
-        }else if($('#'+game.id+' .gameactions').length > 0){
-          $('#'+game.id+' .gameactions').hide()
+          $('#'+game.id+'.game .gameactions').show()
+        }else if($('#'+game.id+'.game .gameactions').length > 0){
+          $('#'+game.id+'.game .gameactions').hide()
           // opponent turn
           // show "waiting for opponent"
         }
-        $('#'+game.id+' .'+game.active_player.id+'.turns').append("<li class='turn'><span class='turn_total'></span></li>")
-        console.log('start_turn', game.active_player.id)
+        ensureTurn(game, game.turns[0])
+        console.log('start_turn', game.active_player)
       })
       socket.on('roll_result', function (game){
         // TODO
-        addMessageToRoom(game.active_player.id+" rolls "+game.last_roll['first']+" "+game.last_roll['second'], 'game:'+game.id)
-        console.log('roll_result', game.last_roll)
+        addMessageToRoom(game.active_player+" rolls "+game.turns[0].values[0]+" "+game.turns[0].values[1], 'game:'+game.id)
+        console.log('roll_result', game.turns[0])
 
-        var li = $('#'+game.id+" ."+game.active_player.id+".turns").children().last()
-        var first_roll = DIE_MAP[game.last_roll['first']-1]
-        var second_roll = DIE_MAP[game.last_roll['second']-1]
-        if(li.text().length > 0){
-          li.append(" + ")
-        }
-        li.append(first_roll+second_roll)
-        li.find('.turn_total').text(game.last_total+" = ")
-        if(game.last_roll['bust']){
-          li.find('.turn_total').addClass('crossed-out')
-          li.prepend("BUST!! <i class='fi-skull'></i> ")
-        }
+        ensureTurn(game, game.turns[0])
         
       })
+
+      function ensureTurn (game, turn) {
+        console.trace()
+        console.log(game, turn)
+        var li = $('#'+game.id+'.game .'+turn.roller+'.turns').find('#'+turn.id+'.turn')
+        if(li.length == 0){
+          $('#'+game.id+'.game .'+turn.roller+'.turns').append("<li class='turn' id='"+turn.id+"'><span class='turn_total'></span><span class='values'></span></li>")
+          li = $('#'+game.id+'.game .'+turn.roller+'.turns').find('#'+turn.id+'.turn')
+        }
+        var $values = li.find('.values')
+        $values.html('')
+        turn.values = turn.values ? turn.values : []
+        turn.values.forEach(function (val, i) {
+          $values.append(DIE_MAP[val-1]+"")
+          if(i % 2 == 1 && i != turn.values.length-1){
+            $values.append(" <i class='fi-plus'></i> ")
+          }
+        })
+
+        var turn_total = turn.values.reduce(function (previous, v) {
+          return previous + v;
+        }, 0)+" = "
+
+        if(turn['bust']){
+          li.find('.turn_total').addClass('crossed-out')
+          turn_total = "BUST!! <i class='fi-skull'></i> " + turn_total
+        }
+        li.find('.turn_total').html(turn_total)
+
+      }
       socket.on('hold_result', function (game){
         // TODO
         // add to score total for this player?
-        var overallscore = game.totals[game.active_player.id]
-        console.log(game.totals)
-        // var td = $('#'+game.id+" ."+game.active_player.id+".turns").children().last().append("= "+total)
-        $('#'+game.id+" ."+game.active_player.id+" .score").text(overallscore)
+        var key = game.active_player == game.player1.id ? "1" : "2"
+        var overallscore = game['totals_player'+key]
+        console.log('scores', game.totals_player1, game.totals_player2)
+        // var td = $('#'+game.id+" ."+game.active_player+".turns").children().last().append("= "+total)
+        $('#'+game.id+".game ."+game.active_player+" .score").text(overallscore)
 
-        var total = game.last_total
-        addMessageToRoom(game.active_player.id+" holds on to "+total+' points', 'game:'+game.id)
+        var total = game.turns[0].values.reduce(function (previous, v) {
+          return previous + v;
+        }, 0)
+        addMessageToRoom(game.active_player+" holds on to "+total+' points', 'game:'+game.id)
         console.log('hold_result', total)
       })
 
       socket.on('game_end', function (game){
         var msg = 'Game Over! '+game.winner.name+" Wins!"
-        $('#'+game.id+' .gameactions').html('')
-        $('#'+game.id).append(msg)
-        $('#'+game.id).append(" <button class='btn btn-warning closebtn' type='button'>Close this Game and related Chat</button>")
+        $('#'+game.id+'.game .gameactions').html('')
+        $('#'+game.id+'.game').append(msg)
+        $('#'+game.id+'.game').append(" <button class='btn btn-warning closebtn' type='button'>Close this Game and related Chat</button>")
         if(user.id == game.winner.id){
           $('#wins').text(game.winner.wins+" Wins")
           $('#losses').text(game.winner.losses+" Losses")

@@ -104,24 +104,6 @@ app.use(session(sessionSettings));
 
 io.use(socketHandshake(sessionSettings))
 
-// var User = function(){
-//   this.id = guid()
-//   this.created_at = (new Date).getTime()
-//   this.wins = 0
-//   this.losses = 0
-// }
-
-// User.unpack = function(raw_user){
-//   var u = new User()
-//   u.id = raw_user.id
-//   u.name = raw_user.name
-//   u.created_at = parseInt(raw_user.created_at, 10)
-//   u.last_connect = parseInt(raw_user.last_connect, 10)
-//   u.wins = parseInt(raw_user.wins, 10)
-//   u.losses = parseInt(raw_user.losses, 10)
-//   // u.socket_id = ???
-//   return u
-// }
 
 app.get('/counter', function (req, res){
   console.log(req.session)
@@ -136,7 +118,7 @@ app.get('/counter', function (req, res){
 
 app.get('/', function (req, res) {
   var up = null
-  console.log(req.session.user_id)
+  console.log('http user_id:'+req.session.user_id)
   if (req.session.user_id) {
     up = app.models.user.findOne({id: req.session.user_id})
   }else{
@@ -192,7 +174,7 @@ io.on('connection', function (socket) {
   socket.onclose = function(reason){
     //emit to rooms here
     //acceess socket.adapter.sids[socket.id] to get all rooms for the socket
-    console.log(socket.adapter.sids[socket.id]);
+    console.log('socket rooms:', socket.adapter.sids[socket.id]);
     console.log('socket disconnected', socket.id)
 
     console.log('leaving:', socket.rooms)
@@ -325,12 +307,13 @@ function pay_attention(socket){
     }]
   }).populate('player1').populate('player2').populate('turns')
   .then(function (active_games){
-    console.log(active_games.length)
+    console.log(active_games.length, "active games")
     socket.emit('left_room', 'matchmaking')
     if(active_games.length > 0){
       active_games.forEach(function (game){
+        socket.join('game:'+game.id)
         game.reload(io)
-        game.set_listeners(socket, validate_actionable)
+        app.models.game.set_listeners(game.id, io, socket, validate_actionable)
       })
     }else{
       search_for_match(socket)
@@ -374,108 +357,19 @@ function guid() {
   return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
 }
 
-// var Game = function (player1, player2){
-//   this.player1 = player1
-//   this.player2 = player2
-//   this.totals = {}
-//   this.totals[player1.id] = 0
-//   this.totals[player2.id] = 0
-//   this.id = guid()
-//   this.active_player_id = player1.id
-//   this.results_this_turn = []
-//   this.disconnects = []
-//   this.active = true
-//   // refactor this...
-//   // add_game_listeners_to_socket(player1["socket_id"], player2["socket_id"], 1);
-//   // add_game_listeners_to_socket(player2["socket_id"], player1["socket_id"], 2);
-//   // return g;
-// }
-
-// Game.prototype.storable = function(){
-//   return {
-//     id: this.id,
-//     player1: this.player1.id,
-//     player2: this.player2.id,
-//     totals_player1: this.totals[this.player1.id],
-//     totals_player2: this.totals[this.player2.id],
-//     active_player_id: this.active_player_id,
-//     winner_id: (this.winner_id ? this.winner_id : ""),
-//     loser_id: (this.loser_id ? this.loser_id : ""),
-//     disconnects: this.disconnects.join(','),
-//     last_socket: (this.last_socket ? this.last_socket : ""),
-//     last_action: (this.last_action ? this.last_action : ""),
-//     last_action_time: (this.last_action_time ? this.last_action_time : 0),
-//   }
-// }
-
-// Game.unpack = function (game_obj){
-//   app.models.user.findOne()
-//   .where({id: game_obj.player1})
-//   .then(function (player1){
-//     var player2 = app.models.user.findOne()
-//     .where({id: game_obj.player2}).then(function (player2){
-//       return player2
-//     })
-//     return [player1, player2]
-//   }).spread(function (player1, player2){
-//     return new Promise(function (resolve, reject){
-//       var g = new Game(player1, player2)
-//       g.id = game_obj.id
-//       g.totals[player1.id] = game_obj.totals_player1
-//       g.totals[player2.id] = game_obj.totals_player2
-//       g.active_player_id = game_obj.active_player_id
-//       g.winner_id = game_obj.winner_id
-//       g.loser_id = game_obj.loser_id
-//       g.disconnects = game_obj.disconnects.split(',')
-//       g.last_socket = game_obj.last_socket
-//       g.last_action = game_obj.last_action
-//       g.last_action_time = parseInt(game_obj.last_action_time, 10)
-//       resolve(g)
-//     })
-//   })
-// }
-
-// Game.prototype.sayHello = function() {
-//   console.log("Hello, I'm a game", this);
-// };
-
-// Game.prototype.emit = function(event_name, obj){
-//   return io.to('game:'+this.id).emit(event_name, obj)
-// }
-
-// Game.prototype.start = function(){
-//   //tell the first player to start
-//   this.emit('start_turn', this)
-// }
-
-// Game.prototype.set_listeners = function(socket){
-//   socket.on('derp', function(derp){
-//     socket.emit('server_broadcast', derp);
-//   });
-//   ['roll', 'hold'].forEach(function (a_name){
-//     socket.on(a_name, function(game_id){
-//       console.log(socket.id, a_name+'ing for game:'+game_id)
-//       validate_actionable(socket, a_name, game_id)
-//       .then(function (game){
-//         game[a_name]()
-//       })
-//     });
-//   })
-// }
-
 var validate_actionable = function(socket, action, game_id) {
   console.log("looking for game:", game_id)
   return app.models.game.findOne({
     id: game_id,
     active: true
-  }).populate('player1').populate('player2').populate('active_player').populate('turns', {sort: 'createdAt DESC'})
+  }).populate('player1').populate('player2').populate('turns', {sort: 'createdAt DESC'})
   .catch(function (err){
     console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
     if(game_id.length > 5){
       socket.emit('leave_room', game_id)
     }
   }).then(function (game){
-    console.log("found game", game)
+    console.log("found game", game.id)
     return new Promise(function (resolve, reject){
       if(!game){
         console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
@@ -484,6 +378,7 @@ var validate_actionable = function(socket, action, game_id) {
         }
         return reject(false)
       }
+      console.log('good game')
 
       // TODO make sure this socket_id 
       // is updated between disconnects
@@ -492,32 +387,34 @@ var validate_actionable = function(socket, action, game_id) {
         console.error(socket.id, 'user:', acting_user_id, 'sent a ', action,', but its still', game.active_player, "\'s turn")
         return reject(false)
       }
+      console.log('good user')
 
       // flood detection
       // milliseconds
       // this also "fixes" a bug that causes clients to emit
       // twice every time they send for some reason
-      var RATE_LIMIT = 90
+      var RATE_LIMIT = 800
       if(game.last_player_id == acting_user_id && game.last_action == action){
-        var new_time = (new Date).getTime()
-        if(game.last_action_time > (new_time - RATE_LIMIT) ){
-          console.error(socket.id, 'is flooding with', action, 'at', new_time)
-          return reject(false)
+        var elapsed = (new Date).getTime()-game.last_action_time
+        if(elapsed > RATE_LIMIT){
+          console.log('action was long enough after to avoid rate limit elapsed:', elapsed, 'ms', "RATE_LIMIT:", RATE_LIMIT)
         }else{
-          console.log('action was long enough after to avoid rate limit')
+          console.error(game.last_player_id, 'on', socket.id, 'is flooding with', action, 'at', elapsed,'ms', "RATE_LIMIT:", RATE_LIMIT)
+          return reject(false)
         }
       }else{
-        // console.log('new action, or socket, rate limit ignored')
+        console.log('new action', action,'or socket, rate limit ignored')
       }
 
-      game.last_player_id = socket.id
+      game.last_player_id = acting_user_id
       game.last_action = action
       game.last_action_time = (new Date).getTime()
       resolve(game)
     }).then(function (game){
+      // console.log('saving game before', action, game)
       return game.save()
     }).catch(function (err){
-      console.error(err)
+      console.error('validate_actionable', err)
       return
     })
   })
@@ -538,143 +435,6 @@ function cleanup_potential_gameroom(roomname, leaver_id){
     game.leaver(leaver_id)
   })
 }
-
-// Game.prototype.leaver = function(user_id) {
-//   this.disconnects.push(user_id)
-//   if(this.disconnects.length == 1){
-//     // only 1 disconnect....
-//     // TODO: give like 30 seconds to reconnect
-//     // could use a setTimeout?
-//     if(!this.winner_id || this.winner_id.length == 0){
-//       if (this.player1.id == user_id) {
-//         this.declare_winner(this.player2.id)
-//       }else if(this.player2.id == user_id){
-//         this.declare_winner(this.player1.id)
-//       }
-//     }
-//   }else if(this.disconnects.length == 2){
-//     this.active = false
-//     this.save()
-//   }
-// }
-
-// Game.prototype.save = function(){
-//   redis_client.hmset("game:"+this.id, this.storable())  
-// }
-
-// Game.prototype.declare_winner = function(player_id) {
-//   var self = this
-//   return new Promise(function (resolve, reject){
-//     redis_client.hgetall('user:'+player_id, function (err, returned){
-//       if(err){
-//         return reject(err)
-//       }
-//       resolve(User.unpack(returned))
-//     })
-//     // TODO: catch missing player
-//   }).then(function (player){
-//     //set player won
-//     return new Promise(function (resolve, reject){
-//       console.log('declaring', player, 'winner')
-
-//       var winner = player;
-//       var loser_id = self.player1.id == winner.id ? self.player2.id : self.player1.id
-//       redis_client.hgetall('user:'+loser_id, function (err, returned){
-//         if(err){
-//           return reject(err)
-//         }
-//         resolve(winner, User.unpack(returned))
-//       })
-//     })
-//     // TODO: catch missing loser
-//   }).then(function (winner, loser){
-//     self.winner_id = winner.id
-//     self.loser_id = loser.id
-
-//     winner.wins = 1 + (winner['wins'] ? winner.wins : 0)
-//     loser.losses = 1 + (loser['losses'] ? loser.losses : 0)
-
-//     console.log(winner.name, 'wins', loser.name, 'loses')
-//     self.emit('game_end', self);
-//     self.save()
-//     redis_client.hmset('user:'+winner.id, winner, function (err, result){
-//       if(err){
-//         return console.error(err)
-//       }
-//     })
-//     redis_client.hmset('user:'+loser.id, loser, function (err, result){
-//       if(err){
-//         return console.error(err)
-//       }
-//     })
-//   })
-// };
-
-// Game.prototype.between_turns = function(){
-//   this.results_this_turn = [];
-//   var total = this.totals[this.active_player_id];
-//   if(total >= 20){
-//     this.declare_winner(this.active_player_id)
-//     // move this over to another hash? out of active games?
-//   }else{
-//     //no winner yet
-//     //tell the current player to start his t
-//     if(this.active_player_id == this.player1.id){
-//       this.active_player_id = this.player2.id
-//     }else{
-//       this.active_player_id = this.player1.id
-//     }
-//     this.emit('start_turn', this)
-//     this.save()
-//   }
-// }
-
-// Game.prototype.roll = function(){
-//   var roll_result = {};
-//   roll_result['game_id'] = this.id
-//   roll_result['roller'] = this.active_player_id;
-
-//   roll_result["first"] = 1 + Math.floor(Math.random() * 6);
-//   roll_result["second"] = 1 + Math.floor(Math.random() * 6);
-//   roll_result["roll_result"] = (roll_result["first"] + roll_result["second"]).toString();
-//   if(roll_result["first"] == 1 || roll_result["second"] == 1){
-//     roll_result["bust"] = true;
-//   }else{
-//     roll_result["bust"] = false;
-//   }
-
-//   console.log((new Date).getTime(), this.active_player_id, 'rolled', roll_result)
-
-//   this.last_roll = roll_result
-
-//   if(!roll_result["bust"]){
-//     this["results_this_turn"].push(roll_result["first"] + roll_result["second"]);
-//   }
-//   this.last_total = this.turn_total()
-//   this.emit('roll_result', this);
-
-//   if(roll_result['bust']) {
-//     this.between_turns();
-//   }else{
-//     this.save()
-//   }
-// }
-
-// Game.prototype.hold = function(){
-//   var total = this.turn_total();
-//   this.last_total = total
-//   this['totals'][this.active_player_id] += total;
-//   this.emit('hold_result', this);
-//   this.between_turns();
-// }
-
-// Game.prototype.turn_total = function(){
-//   var total = 0;
-//   this['results_this_turn'].forEach(function(r) {
-//     total += r;
-//   });
-//   return total;
-// }
 
 var isMatchmaking = false;
 var match_maker;
@@ -711,7 +471,7 @@ function match_make(){
       player2: player2_id,
       active_player: player1_id
     }).then(function (game){
-      return app.models.game.findOne({id: game.id}).populate('player1').populate('player2').populate('active_player')
+      return app.models.game.findOne({id: game.id}).populate('player1').populate('player2')
     }).then(function (game){
       console.log('made a game with', game.player1, 'and', game.player2)
       // var game = new Game(player1, player2);
@@ -725,8 +485,8 @@ function match_make(){
       player2_socket.join('game:'+game.id)
 
       game.start(io)
-      game.set_listeners(player1_socket, validate_actionable)
-      game.set_listeners(player2_socket, validate_actionable)
+      app.models.game.set_listeners(game.id, io, player1_socket, validate_actionable)
+      app.models.game.set_listeners(game.id, io, player2_socket, validate_actionable)
     }).finally(function () {
       // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
       players_lfg_length = countMatchMaking()
@@ -759,6 +519,9 @@ orm.initialize(config, function (err, models) {
 
   app.models = models.collections;
   app.connections = models.connections;
+
+  io.models = app.models;
+  io.connections = app.connections;
 
   server.listen(PORT);
 

@@ -1,4 +1,5 @@
 var Waterline = require('waterline')
+var Promise = require('bluebird')
 var SCORE_TO_WIN = 20
 
 // figure out how to require this properly
@@ -70,7 +71,8 @@ var Game = Waterline.Collection.extend({
     },
 
     disconnects: {
-      type: 'array'
+      type: 'array',
+      defaultsTo: []
     },
 
     emit: function(io, event_name, obj){
@@ -78,70 +80,84 @@ var Game = Waterline.Collection.extend({
     },
 
     start: function(io){
-      this.emit(io, 'create_game', this)
-      this.emit(io, 'joined_room', 'game:'+this.id)
-      this.emit(io, 'left_room', 'matchmaking')
-      this.emit(io, 'start_turn', this)
-    },
-
-    reload: function(io){
-      Game.findOne({id: this.id})
-      .populate('player1')
-      .populate('player2')
-      .populate('turns', {sort: 'createdAt DESC'})
-      .then(function (game){
-        game.emit(io, 'reload_game', game)   
+      io.models.turn.create({
+        game: this.id,
+        roller: this.active_player
+      }).then(function (turn){
+        return io.models.game.refetch(turn.game)
+      }).then(function (game){
+        game.emit(io, 'create_game', game)
         game.emit(io, 'joined_room', 'game:'+game.id)
+        game.emit(io, 'left_room', 'matchmaking')
+        game.emit(io, 'start_turn', game)
       })
     },
 
-    set_listeners: function(socket, validator){
-      // socket.on('derp', function(derp){
-      //   socket.emit('server_broadcast', derp);
-      // });
-      ['roll', 'hold'].forEach(function (action){
-        socket.on(action, function(game_id){
-          console.log(socket.id, action+'ing for game:'+game_id)
-          validator(socket, action, game_id)
-          .then(function (game){
-            game[action]()
-          })
-        });
+    reload: function(io){
+      // ensure there's at least 1 turn
+      io.models.game.refetch(this.id)
+      .then(function (game){
+        return new Promise(function (resolve, reject){
+          if(game.turns && game.turns.length > 0){
+            resolve(game)
+          }else{
+            io.models.turn.create({
+              game: game.id,
+              roller: game.active_player
+            }).then(function (turn){
+              return io.models.game.refetch(turn.game)
+            }).then(function (game){
+              resolve(game)
+            })
+          }
+        })
+      }).then(function (game){
+        console.log('reloading game! game:', game.id)
+        game.emit(io, 'reload_game', game)   
+        game.emit(io, 'joined_room', 'game:'+game.id)
+        game.emit(io, 'start_turn', game)
       })
     },
 
     roll: function(io){
-      Game.findOne({id: this.id})
-      .populate('player1')
-      .populate('player2')
-      .populate('turns', {sort: 'createdAt DESC'})
+      io.models.game.refetch(this.id)
       .then(function (game){
-        var turn = game.turns[0]
-        turn.roll().then(function (turn){
-          console.log((new Date).getTime(), game.active_player, 'rolled', turn)
-          // game.last_total = turn.total()
-          game.emit(io, 'roll_result', game)
-          if(turn.bust){
-            game.between_turns(io)
-          }else{
-            game.save()
+        return new Promise(function (resolve, reject){
+          if(game.turns.length > 0){
+            return resolve(game.turns[0])
           }
+          console.log('new turn for game:', game.id, "roller:", game.active_player)
+          io.models.turn.create({
+            game: game.id,
+            roller: game.active_player
+          }).then(function (turn){
+            resolve(turn)
+          })
         })
+      }).then(function (turn){
+        return turn.roll()
+      }).then(function (turn){
+        return io.models.game.refetch(turn.game.id)
+      }).then(function (game){
+        console.log((new Date).getTime(), game.active_player, 'rolled', game.turns[0])
+
+        game.emit(io, 'roll_result', game)
+        if(game.turns[0].bust){
+          game.between_turns(io)
+        }
       })
     },
 
     hold: function(io){
-      Game.findOne({id: this.id})
-      .populate('turns', {sort: 'createdAt DESC'})
+      io.models.game.refetch(this.id)
       .then(function (game) {
         var turn = game.turns[0]
         // turn.hold()
-        if(turn.roller == game.player1){
+        if(turn.roller == game.player1.id){
           game.totals_player1 += turn.total()
-        }else if(turn.roller == game.player2){
+        }else if(turn.roller == game.player2.id){
           game.totals_player2 += turn.total()
         }
-        // game.last_total = turn.total()
         // this['totals'][this.active_player_id] += total;
         game.emit(io, 'hold_result', game);
         game.between_turns(io);
@@ -150,9 +166,9 @@ var Game = Waterline.Collection.extend({
 
     between_turns: function(io){
       var total = 0
-      if (this.active_player == this.player1){
+      if (this.active_player == this.player1.id){
         total = this.totals_player1
-      }else if (this.active_player == this.player2){
+      }else if (this.active_player == this.player2.id){
         total = this.totals_player2
       }
       if(total >= SCORE_TO_WIN){
@@ -164,34 +180,40 @@ var Game = Waterline.Collection.extend({
 
       // swap the active player
       var new_active_player = null
-      if(this.active_player == this.player1){
-        new_active_player = this.player2
-      }else{
-        new_active_player = this.player1
+      if(this.active_player == this.player1.id){
+        new_active_player = this.player2.id
+      }else if(this.active_player == this.player2.id){
+        new_active_player = this.player1.id
       }
-
-      this.spread({
-        active_player: new_active_player
-      }).catch(function (err){
+      this.active_player = new_active_player
+      console.log('between_turns', 'new_active_player:', new_active_player)
+      this.save().catch(function (err){
         console.error(err, 'failed to set new active player')
       }).then(function (game){
-        return game.turns.add({
-          roller: game.active_player
+        return io.models.game.refetch(game.id)
+      }).then(function (game){
+        return new Promise(function (resolve, reject){
+          // if(game.turns.length > 0){
+          //   return resolve(game.turns[0])
+          // }
+          io.models.turn.create({
+            game: game.id,
+            roller: game.active_player
+          }).then(function (turn){
+            resolve(turn)
+          })
         })
       }).catch(function (err){
         console.error(err, 'failed to add a turn for active player')
-      }).then(function (game){
-        return game.save()
-      }).then(function (game){
-        return game.populate('turns', {sort: 'createdAt DESC'})
+      }).then(function (turn){
+        return io.models.game.refetch(turn.game)
       }).then(function (game){
         game.emit(io, 'start_turn', game)
       })
     
     },
     declare_winner: function(io, winner_id){
-      Game.findOne({id: this.id})
-      .populate('player1').populate('player2')
+      io.models.game.refetch(this.id)
       .then(function (game){
         var loser_id = null
         var winner = null
@@ -210,16 +232,13 @@ var Game = Waterline.Collection.extend({
         winner.wins = winner.wins + 1
         loser.losses = loser.losses + 1
 
-        var game = this.update({
-          winner: winner_id,
-          loser: loser_id,
-          active: false
-        })
+        game.winner = winner_id
+        game.loser = loser_id
+        game.active = false
+
         // TODO: this needs testing
-        return [game, winner.save(), loser.save()]
-      }).spread(function (games, winner, loser){
-        // .update always resolves to an array
-        var game = games[0]
+        return [game.save(), winner.save(), loser.save()]
+      }).spread(function (game, winner, loser){
         console.log(winner.name, 'wins', loser.name, 'loses')
         // TODO: do we need to populate anything?
         io.emit('game_end', game)
@@ -243,7 +262,30 @@ var Game = Waterline.Collection.extend({
   // // 'class' methods
   // assemble: function(player1_id, player2_id){
   // },
+  refetch: function (game_id) {
+    return this.findOne({id: game_id})
+          .populate('player1').populate('player2')
+          .populate('turns', {sort: 'createdAt DESC'})
+  },
 
+  set_listeners: function(game_id, io, socket, validator){
+    socket.on('game:'+game_id, function (action){
+      if(['roll', 'hold'].indexOf(action) == -1){
+        return
+      }
+      console.log("-------------------------------")
+
+      console.log('user:',socket.handshake.session.user_id, 'socket:', socket.id, action+'ing for game:'+game_id)
+      validator(socket, action, game_id)
+      .then(function (game){
+        if(game){
+          game[action](io)            
+        }else{
+          console.log('no valid way to', action, 'for game:', game_id)
+        }
+      })
+    });
+  },
 });
 
 module.exports = Game

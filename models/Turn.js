@@ -17,7 +17,8 @@ var Turn = Waterline.Collection.extend({
     },
 
     values: {
-      type: 'array'
+      type: 'array',
+      defaultsTo: []
     },
 
     bust: {
@@ -31,12 +32,15 @@ var Turn = Waterline.Collection.extend({
       if(first == 1 || second == 1){
         this.bust = true
       }
+      if(!this.values){
+        this.values = []
+      }
       this.values.push(first)
       this.values.push(second)
       return this.save()
     },
     total: function(){
-      return this.values.reduce(function (previous, v) {
+      return (this.values || []).reduce(function (previous, v) {
         return previous + v;
       }, 0)
     },
