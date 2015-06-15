@@ -246,6 +246,10 @@ io.on('connection', function (socket) {
     console.error(err)
     socket.disconnect()
   })
+
+  io.models.user.leaderboard(io).then(function (leaders){
+    io.emit('leaderboard', leaders)
+  })
 });
 
 function set_basic_listeners(socket){

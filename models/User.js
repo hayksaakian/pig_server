@@ -50,6 +50,11 @@ var User = Waterline.Collection.extend({
       collection: 'turn',
       via: 'roller'
     }
+  },
+  leaderboard: function (io) {
+    return io.models.user.find()
+      .sort({ wins: 'desc' })
+      .limit(5)
   }
 });
 

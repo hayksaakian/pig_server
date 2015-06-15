@@ -242,6 +242,10 @@ var Game = Waterline.Collection.extend({
         console.log(winner.name, 'wins', loser.name, 'loses')
         // TODO: do we need to populate anything?
         io.emit('game_end', game)
+        
+        io.models.user.leaderboard(io).then(function (leaders){
+          io.emit('leaderboard', leaders)
+        })
       })
     },
 

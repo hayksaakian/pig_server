@@ -18,10 +18,22 @@
       .crossed-out {
         text-decoration: line-through;
       }
+
+      .chat-container {
+        padding: 2px;
+      }
       .chat {
-        height: 100%; 
+        height: 300px; 
         display: none;
         padding: 2px;
+        position: relative;
+      }
+
+      #roompicker {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
       }
 
       #roompicker li a {
@@ -46,9 +58,9 @@
       .chat-lines li { padding: 5px 10px; }
       .chat-lines li:nth-child(odd) { background: #ddd; }
       .chat-input-box {
-        position: absolute; 
+        position: absolute;
         bottom: 0;
-        margin: 8px;
+        margin: 4px;
       }
 
       .red {
@@ -117,19 +129,28 @@
             </div>
           </div>
         </div>
-        <div class="col-md-4 well chat" role="tabpanel">
-          <div class="nav nav-tabs" id="roompicker" role="tablist">
-            <li role="presentation" class="active"><a href="#server-broadcast-chat" id="server-broadcast-chat-picker" aria-controls="server-broadcast-chat" role="tab" data-toggle="tab" data-roomname="server-broadcast">Global Chat <span data-unread="0" class="label label-info label-as-badge"></span></a></li>          
+        <div class="col-md-4">
+          <div class="well chat-container">
+            <div class="chat" role="tabpanel">
+              <div class="nav nav-tabs" id="roompicker" role="tablist">
+                <li role="presentation" class="active"><a href="#server-broadcast-chat" id="server-broadcast-chat-picker" aria-controls="server-broadcast-chat" role="tab" data-toggle="tab" data-roomname="server-broadcast">Global Chat <span data-unread="0" class="label label-info label-as-badge"></span></a></li>          
+              </div>
+              <div class="tab-content chatboxes">
+                <ul id="server-broadcast-chat" role="tabpanel" class="tab-pane fade in active chat-lines">
+                </ul>
+              </div>
+              <div class="form-inline chat-input-box input-group">
+                <input class="form-control" id="message" autocomplete="off" placeholder="Enter a message..." />
+                <span class="input-group-btn"> 
+                  <button id="send_message" type="button" class="btn">Send</button>
+                </span>
+              </div>
+            </div>
           </div>
-          <div class="tab-content chatboxes">
-            <ul id="server-broadcast-chat" role="tabpanel" class="tab-pane fade in active chat-lines">
-            </ul>
-          </div>
-          <div class="form-inline chat-input-box input-group">
-            <input class="form-control" id="message" autocomplete="off" placeholder="Enter a message..." />
-            <span class="input-group-btn"> 
-              <button id="send_message" type="button" class="btn">Send</button>
-            </span>
+
+          <div id="leaderboard">
+            <h3>Leaderboard</h3>
+            <ol id="leaderboard_list"></ol>
           </div>
         </div>
       </div>
@@ -429,6 +450,14 @@
         }
         addMessageToRoom(msg, 'game:'+game.id)
         console.log('game_end', game)
+      })
+
+      socket.on('leaderboard', function (leaders){
+        console.log('leaders')
+        $('#leaderboard_list').html('')
+        leaders.forEach(function (leader){
+          $('#leaderboard_list').append('<li>'+leader.name+' W:'+leader.wins+' L:'+leader.losses+'</li>')
+        })
       })
 
       function login_button () {
