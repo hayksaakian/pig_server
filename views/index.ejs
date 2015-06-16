@@ -184,9 +184,16 @@
       socket.on('disconnect', function(){
         if($('#refreshbtn').length == 0){
           $('#main').prepend("<button id='refreshbtn' onClick='(window || document).location.reload(true)' class='btn btn-danger'>LOST Connection to Server, click here to reload.</button>")        
+        }else{
+          $('#refreshbtn').show()
         }
       })
 
+      socket.on('connect', function () {
+        if($('#refreshbtn').length > 0){
+          $('#refreshbtn').hide()
+        }
+      })
 
       //disable things if theres no connection
       //make play vs ai happen offline
@@ -384,7 +391,8 @@
       })
       socket.on('roll_result', function (game){
         // TODO
-        addMessageToRoom(game.active_player+" rolls "+game.turns[0].values[0]+" "+game.turns[0].values[1], 'game:'+game.id)
+        var name = game.active_player == game.player1.id ? game.player1.name : game.player2.name;
+        addMessageToRoom(name+" rolls "+game.turns[0].values[0]+" "+game.turns[0].values[1], 'game:'+game.id)
         console.log('roll_result', game.turns[0])
 
         ensureTurn(game, game.turns[0])
