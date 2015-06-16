@@ -5,7 +5,8 @@ if(process.env.NODE_ENV !== "production"){
   dotenv.load()  
 }
 var fs = require('fs')
-var app = require('express')();
+var express = require('express')
+var app = express();
 
 var FileStreamRotator = require('file-stream-rotator')
 var morgan = require('morgan')
@@ -104,6 +105,7 @@ app.use(session(sessionSettings));
 
 io.use(socketHandshake(sessionSettings))
 
+app.use(express.static('public'));
 
 app.get('/counter', function (req, res){
   console.log(req.session)
