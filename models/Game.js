@@ -1,6 +1,13 @@
 var Waterline = require('waterline')
 var Promise = require('bluebird')
-var SCORE_TO_WIN = 20
+
+var Pig = require('./Pig')
+var Gwent = require('./Gwent')
+
+var RULES = {
+  'Pig': Pig,
+  'Gwent': Gwent
+}
 
 // figure out how to require this properly
 var Game = Waterline.Collection.extend({
@@ -9,6 +16,11 @@ var Game = Waterline.Collection.extend({
   connection: 'myRedis',
 
   attributes: {
+    kind: {
+      type: 'string',
+      enum: ['Pig', 'Gwent']
+    },
+
     created_at: {
       type: 'integer',
       defaultsTo: 0
@@ -98,6 +110,9 @@ var Game = Waterline.Collection.extend({
       io.models.game.refetch(this.id)
       .then(function (game){
         return new Promise(function (resolve, reject){
+          // thes could be moved to a 
+          // ruleset.initialize
+          // or something
           if(game.turns && game.turns.length > 0){
             resolve(game)
           }else{
@@ -119,99 +134,22 @@ var Game = Waterline.Collection.extend({
       })
     },
 
-    roll: function(io){
-      io.models.game.refetch(this.id)
-      .then(function (game){
-        return new Promise(function (resolve, reject){
-          if(game.turns.length > 0){
-            return resolve(game.turns[0])
-          }
-          console.log('new turn for game:', game.id, "roller:", game.active_player)
-          io.models.turn.create({
-            game: game.id,
-            roller: game.active_player
-          }).then(function (turn){
-            resolve(turn)
-          })
-        })
-      }).then(function (turn){
-        return turn.roll()
-      }).then(function (turn){
-        return io.models.game.refetch(turn.game.id)
-      }).then(function (game){
-        console.log((new Date).getTime(), game.active_player, 'rolled', game.turns[0])
-
-        game.emit(io, 'roll_result', game)
-        if(game.turns[0].bust){
-          game.between_turns(io)
-        }
-      })
-    },
-
-    hold: function(io){
-      io.models.game.refetch(this.id)
+    act: function(io, action, game_id)  {
+      io.models.game.refetch(game_id)
       .then(function (game) {
-        var turn = game.turns[0]
-        // turn.hold()
-        if(turn.roller == game.player1.id){
-          game.totals_player1 += turn.total()
-        }else if(turn.roller == game.player2.id){
-          game.totals_player2 += turn.total()
-        }
-        // this['totals'][this.active_player_id] += total;
-        game.emit(io, 'hold_result', game);
-        game.between_turns(io);
+        var ruleset = RULES[game.kind]
+        ruleset[action](io, game)
       })
     },
 
-    between_turns: function(io){
-      var total = 0
-      if (this.active_player == this.player1.id){
-        total = this.totals_player1
-      }else if (this.active_player == this.player2.id){
-        total = this.totals_player2
-      }
-      if(total >= SCORE_TO_WIN){
-        this.declare_winner(io, this.active_player)
-        return;
-        // move this over to another hash? out of active games?
-      }
-      //no winner yet
+    //  Rule set specific
+    ///////////////////////////
 
-      // swap the active player
-      var new_active_player = null
-      if(this.active_player == this.player1.id){
-        new_active_player = this.player2.id
-      }else if(this.active_player == this.player2.id){
-        new_active_player = this.player1.id
-      }
-      this.active_player = new_active_player
-      console.log('between_turns', 'new_active_player:', new_active_player)
-      this.save().catch(function (err){
-        console.error(err, 'failed to set new active player')
-      }).then(function (game){
-        return io.models.game.refetch(game.id)
-      }).then(function (game){
-        return new Promise(function (resolve, reject){
-          // if(game.turns.length > 0){
-          //   return resolve(game.turns[0])
-          // }
-          io.models.turn.create({
-            game: game.id,
-            roller: game.active_player
-          }).then(function (turn){
-            resolve(turn)
-          })
-        })
-      }).catch(function (err){
-        console.error(err, 'failed to add a turn for active player')
-      }).then(function (turn){
-        return io.models.game.refetch(turn.game)
-      }).then(function (game){
-        game.emit(io, 'start_turn', game)
-      })
     
-    },
+    // non rule set specific
+    ///////////////////////////
+    
+
     declare_winner: function(io, winner_id){
       io.models.game.refetch(this.id)
       .then(function (game){
@@ -242,7 +180,7 @@ var Game = Waterline.Collection.extend({
         console.log(winner.name, 'wins', loser.name, 'loses')
         // TODO: do we need to populate anything?
         io.emit('game_end', game)
-        
+
         io.models.user.leaderboard(io).then(function (leaders){
           io.emit('leaderboard', leaders)
         })
@@ -272,24 +210,95 @@ var Game = Waterline.Collection.extend({
           .populate('turns', {sort: 'createdAt DESC'})
   },
 
-  set_listeners: function(game_id, io, socket, validator){
+  set_listeners: function(game_id, io, socket){
     socket.on('game:'+game_id, function (action){
-      if(['roll', 'hold'].indexOf(action) == -1){
-        return
-      }
       console.log("-------------------------------")
 
-      console.log('user:',socket.handshake.session.user_id, 'socket:', socket.id, action+'ing for game:'+game_id)
-      validator(socket, action, game_id)
+      console.log('user:', socket.handshake.session.user_id, 'socket:', socket.id, action+'ing for game:'+game_id)
+      io.models.game.validate_actionable(io, socket, action, game_id)
       .then(function (game){
         if(game){
-          game[action](io)            
+          game.act(io, action, game.id)            
         }else{
           console.log('no valid way to', action, 'for game:', game_id)
         }
       })
     });
   },
+
+  validate_actionable: function(io, socket, action, game_id) {
+    console.log("looking for game:", game_id)
+    return io.models.refetch(game_id)
+    .catch(function (err){
+      console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
+      if(game_id.length > 5){
+        socket.emit('leave_room', game_id)
+      }
+    }).then(function (game){
+      console.log("found game", game.id)
+      return new Promise(function (resolve, reject){
+        if(!game){
+          console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
+          if(game_id.length > 5){
+            socket.emit('leave_room', game_id)
+          }
+          return reject(false)
+        }
+        console.log('good game id')
+
+        if(!RULES.hasOwnProperty(game.kind)){
+          console.error("for some reason we dont recognize this rule set:", game.kind)
+          return reject(false)
+        }
+        console.log('good game kind')
+
+
+        var ruleset = RULES[game.kind]
+        if(ruleset.player_actions().indexOf(action) == -1){
+          console.error("bad action, players cannot", action, 'in a game of', game.kind)
+          return reject(false)
+        }
+        console.log('good action')
+
+        // TODO make sure this socket_id 
+        // is updated between disconnects
+        var acting_user_id = socket.handshake.session.user_id
+        if(acting_user_id != game.active_player){
+          console.error(socket.id, 'user:', acting_user_id, 'sent a ', action,', but its still', game.active_player, "\'s turn")
+          return reject(false)
+        }
+        console.log('good user')
+
+        // flood detection
+        // milliseconds
+        // this also "fixes" a bug that causes clients to emit
+        // twice every time they send for some reason
+        var RATE_LIMIT = 800
+        if(game.last_player_id == acting_user_id && game.last_action == action){
+          var elapsed = (new Date).getTime()-game.last_action_time
+          if(elapsed > RATE_LIMIT){
+            console.log('action was long enough after to avoid rate limit elapsed:', elapsed, 'ms', "RATE_LIMIT:", RATE_LIMIT)
+          }else{
+            console.error(game.last_player_id, 'on', socket.id, 'is flooding with', action, 'at', elapsed,'ms', "RATE_LIMIT:", RATE_LIMIT)
+            return reject(false)
+          }
+        }else{
+          console.log('new action', action, 'or socket, rate limit ignored')
+        }
+
+        game.last_player_id = acting_user_id
+        game.last_action = action
+        game.last_action_time = (new Date).getTime()
+        resolve(game)
+      }).then(function (game){
+        // console.log('saving game before', action, game)
+        return game.save()
+      }).catch(function (err){
+        console.error('validate_actionable', err)
+        return
+      })
+    })
+  }
 });
 
 module.exports = Game

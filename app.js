@@ -105,7 +105,7 @@ app.use(session(sessionSettings));
 
 io.use(socketHandshake(sessionSettings))
 
-app.use(express.static('public'));
+app.use(express.static(__dirname + '/public'));
 
 app.get('/counter', function (req, res){
   console.log(req.session)
@@ -118,7 +118,12 @@ app.get('/counter', function (req, res){
   })
 })
 
-app.get('/', function (req, res) {
+require('node-jsx').install()
+var React = require('react');
+var addons = require('react-addons');
+var App = React.createFactory(require('./jsx/Frontend'))
+
+app.use(function (req, res, next) {
   var up = null
   console.log('http user_id:'+req.session.user_id)
   if (req.session.user_id) {
@@ -127,7 +132,7 @@ app.get('/', function (req, res) {
     console.log('New User! HTTP from:', req.ip)
     up = app.models.user.create({})
   }
-  up.then(function (user){
+  return up.then(function (user){
     // console.log('found a user', user)
     return app.models.user.update({ id: user.id }, {
       last_ip: req.ip,
@@ -149,13 +154,30 @@ app.get('/', function (req, res) {
     console.error('failed to save user', err)
     res.status(500).json({ err: err });      
   }).then(function (user){
-    // console.log('sending user', user)
-    res.render('index', {
-      user: user,
-      port: PORT
-    })
+    res.locals.current_user = user
+    next()
+  })
+})
+
+app.get('/', function (req, res) {
+  var react_props = {
+    user: res.locals.current_user,
+    port: PORT
+  }
+  res.render('index', {
+    rendered_app: React.renderToString(App(react_props)),
+    react_props: react_props
+  })
+})
+
+app.get('/old', function (req, res) {
+  // console.log('sending user', user)
+  res.render('old_index', {
+    user: res.locals.current_user,
+    port: PORT
   })
 });
+
 
 // TODO: make this a cache later on
 // var active_games = {};
@@ -319,7 +341,7 @@ function pay_attention(socket){
       active_games.forEach(function (game){
         socket.join('game:'+game.id)
         game.reload(io)
-        app.models.game.set_listeners(game.id, io, socket, validate_actionable)
+        app.models.game.set_listeners(game.id, io, socket)
       })
     }else{
       search_for_match(socket)
@@ -362,70 +384,6 @@ function S4() {
 function guid() {
   return (S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4());
 }
-
-var validate_actionable = function(socket, action, game_id) {
-  console.log("looking for game:", game_id)
-  return app.models.game.findOne({
-    id: game_id,
-    active: true
-  }).populate('player1').populate('player2').populate('turns', {sort: 'createdAt DESC'})
-  .catch(function (err){
-    console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
-    if(game_id.length > 5){
-      socket.emit('leave_room', game_id)
-    }
-  }).then(function (game){
-    console.log("found game", game.id)
-    return new Promise(function (resolve, reject){
-      if(!game){
-        console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
-        if(game_id.length > 5){
-          socket.emit('leave_room', game_id)
-        }
-        return reject(false)
-      }
-      console.log('good game')
-
-      // TODO make sure this socket_id 
-      // is updated between disconnects
-      var acting_user_id = socket.handshake.session.user_id
-      if(acting_user_id != game.active_player){
-        console.error(socket.id, 'user:', acting_user_id, 'sent a ', action,', but its still', game.active_player, "\'s turn")
-        return reject(false)
-      }
-      console.log('good user')
-
-      // flood detection
-      // milliseconds
-      // this also "fixes" a bug that causes clients to emit
-      // twice every time they send for some reason
-      var RATE_LIMIT = 800
-      if(game.last_player_id == acting_user_id && game.last_action == action){
-        var elapsed = (new Date).getTime()-game.last_action_time
-        if(elapsed > RATE_LIMIT){
-          console.log('action was long enough after to avoid rate limit elapsed:', elapsed, 'ms', "RATE_LIMIT:", RATE_LIMIT)
-        }else{
-          console.error(game.last_player_id, 'on', socket.id, 'is flooding with', action, 'at', elapsed,'ms', "RATE_LIMIT:", RATE_LIMIT)
-          return reject(false)
-        }
-      }else{
-        console.log('new action', action,'or socket, rate limit ignored')
-      }
-
-      game.last_player_id = acting_user_id
-      game.last_action = action
-      game.last_action_time = (new Date).getTime()
-      resolve(game)
-    }).then(function (game){
-      // console.log('saving game before', action, game)
-      return game.save()
-    }).catch(function (err){
-      console.error('validate_actionable', err)
-      return
-    })
-  })
-};
-
 
 function cleanup_potential_gameroom(roomname, leaver_id){
   if(roomname.substring(0, 5) !== 'game:'){
@@ -491,8 +449,8 @@ function match_make(){
       player2_socket.join('game:'+game.id)
 
       game.start(io)
-      app.models.game.set_listeners(game.id, io, player1_socket, validate_actionable)
-      app.models.game.set_listeners(game.id, io, player2_socket, validate_actionable)
+      app.models.game.set_listeners(game.id, io, player1_socket)
+      app.models.game.set_listeners(game.id, io, player2_socket)
     }).finally(function () {
       // start(player1["socket_id"], player2["socket_id"], game['id'], "player1");
       players_lfg_length = countMatchMaking()

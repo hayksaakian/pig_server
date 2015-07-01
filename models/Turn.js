@@ -39,12 +39,12 @@ var Turn = Waterline.Collection.extend({
       this.values.push(second)
       return this.save()
     },
+
     total: function(){
       return (this.values || []).reduce(function (previous, v) {
         return previous + v;
       }, 0)
     },
-
   }
 })
 
