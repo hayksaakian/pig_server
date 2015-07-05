@@ -428,12 +428,15 @@ function match_make(){
     var player2_socket = io.sockets.connected[player2_socket_id]    
     var player2_id = player2_socket.handshake.session.user_id
 
+    // TODO: stop this match if player 1 and 2 are the same person
+
     console.log('making a game with', player1_id, 'and', player2_id)
 
     app.models.game.create({
       player1: player1_id,
       player2: player2_id,
-      active_player: player1_id
+      active_player: player1_id,
+      kind: 'Pig'
     }).then(function (game){
       return app.models.game.findOne({id: game.id}).populate('player1').populate('player2')
     }).then(function (game){

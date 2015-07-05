@@ -47,17 +47,6 @@
 	/* WEBPACK VAR INJECTION */(function(global) {var React = __webpack_require__(1);
 	var addons = __webpack_require__(157);
 	global.React = React;
-	// var MagicMove = require('./react-magic-move');
-	var classNames = __webpack_require__(250);
-
-	var DIE_MAP = [
-	  "<i className='fi-die-one large red'></i>",
-	  "<i className='fi-die-two large'></i>",
-	  "<i className='fi-die-three large'></i>",
-	  "<i className='fi-die-four large'></i>",
-	  "<i className='fi-die-five large'></i>",
-	  "<i className='fi-die-six large'></i>",
-	]
 
 	var socket = null
 
@@ -89,7 +78,7 @@
 
 	          React.createElement("div", {className: "row", style: {height: '100%'}}, 
 	            React.createElement("div", {className: "col-md-8"}, 
-	              React.createElement(Main, null)
+	              React.createElement(Main, {user: this.state.user})
 	            ), 
 	            React.createElement("div", {className: "col-md-4"}, 
 	              React.createElement(ChatContainer, {user: this.state.user}), 
@@ -103,11 +92,28 @@
 	})
 
 	var MatchmakingView = React.createClass({displayName: "MatchmakingView",
+	  getInitialState: function(){
+	    return this.props
+	  },
+	  componentDidMount: function(){
+	    socket.on('matchmaking_list', function (list){
+	      this.setState({users: list})
+	    })
+	  },
 	  render: function () {
+	    if(!this.state.users || this.state.users.length == 0){
+	      return React.createElement("div", null)
+	    }
+	    var matchmakers = (this.state.users || []).map(function (user){
+	      return React.createElement("li", null, 
+	        React.createElement("span", {"data-toggle": "tooltip", "data-placement": "top", title: user.id}, user.name, "  W:", user.wins, " L:", user.losses)
+	      )
+	    })
 	    return (
 	      React.createElement("div", {id: "matchmaking_view"}, 
 	        React.createElement("h3", null, "Matchmaking list"), 
-	        React.createElement("div", {id: "matchmaking"}
+	        React.createElement("ul", {id: "mmlist"}, 
+	          matchmakers
 	        )
 	      )
 	    )
@@ -127,6 +133,7 @@
 	    this.setState({disabled: true})
 	  },
 	  ensureGame: function (g){
+	    console.log('ensuring a game!', g)
 	    // console.log('create_game', g)
 	    // $('#search_for_match').text("Search for another Game")
 	    // ensureGame(g)
@@ -139,8 +146,11 @@
 	    })
 	  },
 	  componentDidMount: function(){
-	    socket.on('reload_game', this.ensureGame.bind(this))
-	    socket.on('create_game', this.ensureGame.bind(this))
+	    socket.on('reload_game', this.ensureGame)
+	    socket.on('create_game', this.ensureGame)
+	    socket.on('roll_result', this.ensureGame)
+	    socket.on('start_turn', this.ensureGame)
+	    socket.on('game_end', this.ensureGame)
 	  },
 	  render: function () {
 	    return (
@@ -150,7 +160,7 @@
 	          React.createElement("h3", null, "Games"), 
 	          React.createElement(GameContainer, {games: this.state.games, user: this.props.user}), 
 	          React.createElement("hr", null), 
-	          React.createElement("button", {onClick: this.search_for_match.bind(this), disabled: this.state.disabled, className: "btn btn-success navbar-btn", id: "search_for_match"}, 
+	          React.createElement("button", {onClick: this.search_for_match, disabled: this.state.disabled, className: "btn btn-success navbar-btn", id: "search_for_match"}, 
 	            this.state.matchmaking_button_text
 	          )
 	        )
@@ -163,6 +173,7 @@
 	  render: function(){
 	    var gameNodes = (Object.keys(this.props.games) || []).map(function (gameid, i){
 	      var game = this.props.games[gameid]
+	      console.log('rendering a game:', game)
 	      return (
 	        React.createElement(Game, {game: game, user: this.props.user})
 	      )
@@ -175,41 +186,30 @@
 	  }
 	})
 
+	var BoardKinds = {
+	  "Pig": __webpack_require__(251)
+	}
+
 	var Game = React.createClass({displayName: "Game",
+	  sendAction: function(action){
+	    socket.emit('game:'+this.props.game.id, action)
+	  },
 	  render: function(){
+	    var board = React.createElement(BoardKinds[this.props.game.kind], {game: this.props.game, user: this.props.user, sendAction: this.sendAction})
+
+
 	    return (
 	      React.createElement("div", {className: "game", id: this.props.game.id}, 
 	        React.createElement("h4", null, "Game: ", this.props.game.id), 
 	        React.createElement("div", {className: "gameinfo"}, 
-	          React.createElement("div", {className: "row"}, 
-	            React.createElement("div", {className: "col-md-6"}, 
-	              React.createElement("ul", {className: "unstyled turns"}, 
-	                React.createElement("li", null, 
-	                  React.createElement("span", {"data-placement": "top", "data-toggle": "tooltip", title: g.player1.id, className: "name"}, 
-	                    g.player1.name
-	                  ), 
-	                  React.createElement("span", {class: "score"}, g.totals_player1)
-	                )
-	              ), 
-	            "(g.player1.id == user.id ? '", React.createElement("div", {class: "gameactions"}), "': \"\")"
-	            ), 
-	            React.createElement("div", {className: "col-md-6"}, 
-	              React.createElement("ul", {className: "unstyled turns"}, 
-	                React.createElement("li", null, 
-	                  React.createElement("span", {"data-placement": "top", "data-toggle": "tooltip", title: g.player2.id, className: "name"}, 
-	                    g.player2.name
-	                  ), 
-	                  React.createElement("span", {class: "score"}, g.totals_player2)
-	                )
-	              ), 
-	              "(g.player2.id == user.id ? '", React.createElement("div", {class: "gameactions"}), "': \"\")"
-	            )
-	          )
+	          board
 	        )
 	      )
 	    )
 	  }
 	})
+
+
 
 	// TODO
 	// scroll down
@@ -240,7 +240,7 @@
 	    console.log('message', obj)
 	    this.setState(function (previousState){
 	      if(previousState.rooms[obj.roomname]){
-	        previousState.rooms[obj.roomname].messages.push(obj)        
+	        previousState.rooms[obj.roomname].messages.push(obj)
 	      }else{
 	        previousState.rooms[obj.roomname] = {
 	          human_name: obj.roomname,
@@ -250,6 +250,9 @@
 	          ],
 	          unread: 0
 	        }
+	      }
+	      if(obj.roomname != previousState.active_room){
+	        previousState.rooms[obj.roomname].unread += 1
 	      }
 	      return previousState
 	    })
@@ -313,7 +316,7 @@
 	      var css_id = room.name+"-chat-picker"
 
 	      controls.push(
-	        React.createElement("li", {role: "presentation", className: css_class, onClick: this.handleClick.bind(this, i, roomname)}, 
+	        React.createElement("li", {key: css_id, role: "presentation", className: css_class, onClick: this.handleClick.bind(this, i, roomname)}, 
 	          React.createElement("a", {href: css_href, id: css_id, "aria-controls": css_name, role: "tab", "data-toggle": "tab", "data-roomname": room.name}, 
 	          room.human_name, " ", React.createElement("span", {"data-unread": room.unread, className: "label label-info label-as-badge"}, room.unread != 0 ? room.unread : '')
 	          )
@@ -32765,58 +32768,151 @@
 
 
 /***/ },
-/* 250 */
+/* 250 */,
+/* 251 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var __WEBPACK_AMD_DEFINE_RESULT__;/*!
-	  Copyright (c) 2015 Jed Watson.
-	  Licensed under the MIT License (MIT), see
-	  http://jedwatson.github.io/classnames
-	*/
+	var React = __webpack_require__(1);
+	var addons = __webpack_require__(157);
 
-	(function () {
-		'use strict';
 
-		function classNames () {
+	var DIE_MAP = [
+	  React.createElement("i", {className: "fi-die-one large red"}),
+	  React.createElement("i", {className: "fi-die-two large"}),
+	  React.createElement("i", {className: "fi-die-three large"}),
+	  React.createElement("i", {className: "fi-die-four large"}),
+	  React.createElement("i", {className: "fi-die-five large"}),
+	  React.createElement("i", {className: "fi-die-six large"}),
+	]
 
-			var classes = '';
 
-			for (var i = 0; i < arguments.length; i++) {
-				var arg = arguments[i];
-				if (!arg) continue;
+	var PigBoard = React.createClass({displayName: "PigBoard",
+	  render: function(){
+	    return(
+	      React.createElement("div", {className: "row"}, 
+	        React.createElement("div", {className: "col-md-6"}, 
+	          React.createElement(ScoreCard, {player: this.props.game.player1, game: this.props.game, user: this.props.user, sendAction: this.props.sendAction})
+	        ), 
+	        React.createElement("div", {className: "col-md-6"}, 
+	          React.createElement(ScoreCard, {player: this.props.game.player2, game: this.props.game, user: this.props.user, sendAction: this.props.sendAction})
+	        )
+	      )
+	    )
+	  }
+	})
 
-				var argType = typeof arg;
+	var ScoreCard = React.createClass({displayName: "ScoreCard",
+	  sortByCreatedAt: function(a, b){
+	    if (a.createdAt > b.createdAt) {
+	      return 1;
+	    }
+	    if (a.createdAt < b.createdAt) {
+	      return -1;
+	    }
+	    // a must be equal to b
+	    return 0;
+	  },
+	  render: function(){
+	    var player = this.props.player
+	    var turns  = (this.props.game.turns || []).filter(function (turn){
+	      return turn.roller == player.id
+	    }).sort(this.sortByCreatedAt)
 
-				if ('string' === argType || 'number' === argType) {
-					classes += ' ' + arg;
+	    var score = this.props.player.id == this.props.game.player1.id ? this.props.game.totals_player1 : this.props.game.totals_player2
 
-				} else if (Array.isArray(arg)) {
-					classes += ' ' + classNames.apply(null, arg);
+	    var turns_markup = turns.map(function (turn){
+	      return React.createElement(Turn, {turn: turn})
+	    })
 
-				} else if ('object' === argType) {
-					for (var key in arg) {
-						if (arg.hasOwnProperty(key) && arg[key]) {
-							classes += ' ' + key;
-						}
-					}
-				}
-			}
+	    var turn_actions  = "";
+	    if(this.props.game.active && this.props.game.active_player == this.props.player.id){
+	      if(this.props.game.active_player == this.props.user.id){
+	        turn_actions = React.createElement(GameActions, {sendAction: this.props.sendAction,  turn: turns.length > 0 ? turns[turns.length-1] : null})
+	      }else{
+	        turn_actions = React.createElement("h4", null, React.createElement("em", null, "Waiting for ", this.props.player.name))
+	      }
+	    }else{
+	      if(this.props.game.winner_id == this.props.player.id){
+	        turn_actions = React.createElement("h4", null, this.props.player.name, " WINS")
+	      }else if(this.props.game.loser_id == this.props.player.id){
+	        turn_actions = React.createElement("h4", null, this.props.player.name, " loses...")
+	      }
+	    }
 
-			return classes.substr(1);
-		}
+	    return (
+	      React.createElement("div", {className: "ScoreCard"}, 
+	        React.createElement("ul", {className: "unstyled turns"}, 
+	          React.createElement("li", null, 
+	            React.createElement("span", {"data-placement": "top", "data-toggle": "tooltip", title: this.props.player.id, className: "name"}, 
+	              this.props.player.name
+	            ), 
+	            React.createElement("span", {className: "score"}, " ", score)
+	          ), 
+	          turns_markup
+	        ), 
+	        turn_actions
+	      )
+	    )
+	  }
+	})
 
-		if (true) {
-			// AMD. Register as an anonymous module.
-			!(__WEBPACK_AMD_DEFINE_RESULT__ = function () {
-				return classNames;
-			}.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
-		} else if (typeof module !== 'undefined' && module.exports) {
-			module.exports = classNames;
-		} else {
-			window.classNames = classNames;
-		}
+	var Turn = React.createClass({displayName: "Turn",
+	  render: function(){
+	    var turn = this.props.turn;
 
-	}());
+	    // WARNING:this props may be bugged due to the bind. since game.id is used later on
+	    var turn_total = turn.values.reduce(function (previous, v) {
+	      return previous + v;
+	    }, 0)
+
+
+	    var value_markup = turn.values.map(function (value, i){
+	      var die = DIE_MAP[value-1]
+	      if(i % 2 == 1 && i != turn.values.length-1){
+	        var die = React.createElement("span", null, die, " ", React.createElement("i", {className: "fi-plus"}), " ")
+	      }
+	      return die
+	    })
+
+	    var bust_markup = ""
+	    if(turn.bust){
+	      bust_markup = (React.createElement("span", null, "BUST!! ", React.createElement("i", {className: "fi-skull"}), " "))
+	    }
+
+	    var values_class = turn.bust ? "values crossed-out" : "values"
+
+	    return (
+	      React.createElement("li", {className: "turn"}, 
+	        React.createElement("span", {className: "turn_total"}, bust_markup, turn_total, " = "), 
+	        React.createElement("span", {className: values_class}, " ", value_markup)
+	      )
+	    )
+	  }
+	})
+
+	var GameActions = React.createClass({displayName: "GameActions",
+	  render: function(){
+	    // WARNING:this props may be bugged due to the bind. since game.id is used later on
+	    var points = ""
+	    var turn = this.props.turn
+	    if(turn){
+	      points = turn.values.reduce(function (a, b) {
+	        return a + b;
+	      }, 0)
+	    }
+
+	    return (
+	      React.createElement("div", {className: "btn-toolbar"}, 
+	        React.createElement("button", {type: "button", onClick: this.props.sendAction.bind(this, 'roll'), className: "btn rollbtn"}, "Roll"), 
+	        React.createElement("button", {type: "button", onClick: this.props.sendAction.bind(this, 'hold'), className: "btn holdbtn"}, "Hold ", points)
+	      )
+	    )
+	  }
+	})
+
+
+
+	module.exports = PigBoard
 
 
 /***/ }

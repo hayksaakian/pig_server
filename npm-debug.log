@@ -19,7 +19,7 @@
 10 error You can get their info via:
 10 error     npm owner ls pig_server
 10 error There is likely additional logging output above.
-11 error System Darwin 14.3.0
+11 error System Darwin 14.4.0
 12 error command "/Users/hayk/.nvm/v0.10.38/bin/node" "/Users/hayk/.nvm/v0.10.38/bin/npm" "start"
 13 error cwd /Users/hayk/node/pig_server
 14 error node -v v0.10.38

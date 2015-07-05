@@ -26,6 +26,11 @@ var Turn = Waterline.Collection.extend({
       defaultsTo: false
     },
 
+    finished: {
+      type: 'boolean',
+      defaultsTo: false
+    },
+
     roll: function(){
       var first = 1 + Math.floor(Math.random() * 6);
       var second = 1 + Math.floor(Math.random() * 6);

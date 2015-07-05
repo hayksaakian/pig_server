@@ -228,7 +228,7 @@ var Game = Waterline.Collection.extend({
 
   validate_actionable: function(io, socket, action, game_id) {
     console.log("looking for game:", game_id)
-    return io.models.refetch(game_id)
+    return io.models.game.refetch(game_id)
     .catch(function (err){
       console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
       if(game_id.length > 5){
@@ -237,8 +237,8 @@ var Game = Waterline.Collection.extend({
     }).then(function (game){
       console.log("found game", game.id)
       return new Promise(function (resolve, reject){
-        if(!game){
-          console.error(err, socket.id, 'sent a', action, 'to an inactive game', game_id)
+        if(!game || !game.active){
+          console.error(socket.id, 'sent a', action, 'to an inactive game', game_id)
           if(game_id.length > 5){
             socket.emit('leave_room', game_id)
           }

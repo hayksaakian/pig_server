@@ -1,17 +1,6 @@
 var React = require('react');
 var addons = require('react-addons');
 global.React = React;
-// var MagicMove = require('./react-magic-move');
-var classNames = require('classnames');
-
-var DIE_MAP = [
-  "<i className='fi-die-one large red'></i>",
-  "<i className='fi-die-two large'></i>",
-  "<i className='fi-die-three large'></i>",
-  "<i className='fi-die-four large'></i>",
-  "<i className='fi-die-five large'></i>",
-  "<i className='fi-die-six large'></i>",
-]
 
 var socket = null
 
@@ -43,7 +32,7 @@ var Frontend = React.createClass({
 
           <div className="row" style={{height: '100%'}}>
             <div className="col-md-8">
-              <Main />
+              <Main user={this.state.user} />
             </div>
             <div className="col-md-4">
               <ChatContainer user={this.state.user}  />
@@ -57,12 +46,29 @@ var Frontend = React.createClass({
 })
 
 var MatchmakingView = React.createClass({
+  getInitialState: function(){
+    return this.props
+  },
+  componentDidMount: function(){
+    socket.on('matchmaking_list', function (list){
+      this.setState({users: list})
+    })
+  },
   render: function () {
+    if(!this.state.users || this.state.users.length == 0){
+      return <div></div>
+    }
+    var matchmakers = (this.state.users || []).map(function (user){
+      return <li>
+        <span data-toggle="tooltip" data-placement="top" title={user.id}>{user.name}  W:{user.wins} L:{user.losses}</span>
+      </li>
+    })
     return (
       <div id="matchmaking_view">
         <h3>Matchmaking list</h3>
-        <div id="matchmaking">
-        </div>            
+        <ul id="mmlist">
+          {matchmakers}
+        </ul>           
       </div>
     )
   }
@@ -81,6 +87,7 @@ var Main = React.createClass({
     this.setState({disabled: true})
   },
   ensureGame: function (g){
+    console.log('ensuring a game!', g)
     // console.log('create_game', g)
     // $('#search_for_match').text("Search for another Game")
     // ensureGame(g)
@@ -93,8 +100,11 @@ var Main = React.createClass({
     })
   },
   componentDidMount: function(){
-    socket.on('reload_game', this.ensureGame.bind(this))
-    socket.on('create_game', this.ensureGame.bind(this))
+    socket.on('reload_game', this.ensureGame)
+    socket.on('create_game', this.ensureGame)
+    socket.on('roll_result', this.ensureGame)
+    socket.on('start_turn', this.ensureGame)
+    socket.on('game_end', this.ensureGame)
   },
   render: function () {
     return (
@@ -104,7 +114,7 @@ var Main = React.createClass({
           <h3>Games</h3>
           <GameContainer games={this.state.games} user={this.props.user} />
           <hr />
-          <button onClick={this.search_for_match.bind(this)} disabled={this.state.disabled} className="btn btn-success navbar-btn" id="search_for_match">
+          <button onClick={this.search_for_match} disabled={this.state.disabled} className="btn btn-success navbar-btn" id="search_for_match">
             {this.state.matchmaking_button_text}
           </button>
         </div>
@@ -117,6 +127,7 @@ var GameContainer = React.createClass({
   render: function(){
     var gameNodes = (Object.keys(this.props.games) || []).map(function (gameid, i){
       var game = this.props.games[gameid]
+      console.log('rendering a game:', game)
       return (
         <Game game={game} user={this.props.user}/>
       )
@@ -129,41 +140,30 @@ var GameContainer = React.createClass({
   }
 })
 
+var BoardKinds = {
+  "Pig": require('./PigBoard')
+}
+
 var Game = React.createClass({
+  sendAction: function(action){
+    socket.emit('game:'+this.props.game.id, action)
+  },
   render: function(){
+    var board = React.createElement(BoardKinds[this.props.game.kind], {game: this.props.game, user: this.props.user, sendAction: this.sendAction})
+
+
     return (
       <div className="game" id={this.props.game.id}>
         <h4>Game: {this.props.game.id}</h4>
         <div className="gameinfo">
-          <div className="row">
-            <div className="col-md-6">
-              <ul className="unstyled turns">
-                <li>
-                  <span data-placement="top" data-toggle="tooltip" title={g.player1.id} className="name">
-                    {g.player1.name}
-                  </span>
-                  <span class="score">{g.totals_player1}</span>
-                </li>
-              </ul>
-            (g.player1.id == user.id ? '<div class="gameactions"></div>': "")
-            </div>
-            <div className="col-md-6">
-              <ul className="unstyled turns">
-                <li>
-                  <span data-placement="top" data-toggle="tooltip" title={g.player2.id} className="name">
-                    {g.player2.name}
-                  </span>
-                  <span class="score">{g.totals_player2}</span>
-                </li>
-              </ul>
-              (g.player2.id == user.id ? '<div class="gameactions"></div>': "")
-            </div>
-          </div>
+          {board}
         </div>
       </div>
     )
   }
 })
+
+
 
 // TODO
 // scroll down
@@ -194,7 +194,7 @@ var ChatContainer = React.createClass({
     console.log('message', obj)
     this.setState(function (previousState){
       if(previousState.rooms[obj.roomname]){
-        previousState.rooms[obj.roomname].messages.push(obj)        
+        previousState.rooms[obj.roomname].messages.push(obj)
       }else{
         previousState.rooms[obj.roomname] = {
           human_name: obj.roomname,
@@ -204,6 +204,9 @@ var ChatContainer = React.createClass({
           ],
           unread: 0
         }
+      }
+      if(obj.roomname != previousState.active_room){
+        previousState.rooms[obj.roomname].unread += 1
       }
       return previousState
     })
@@ -267,7 +270,7 @@ var ChatContainer = React.createClass({
       var css_id = room.name+"-chat-picker"
 
       controls.push(
-        <li role="presentation" className={css_class} onClick={this.handleClick.bind(this, i, roomname)}>
+        <li key={css_id} role="presentation" className={css_class} onClick={this.handleClick.bind(this, i, roomname)}>
           <a href={css_href} id={css_id} aria-controls={css_name} role="tab" data-toggle="tab" data-roomname={room.name}>
           {room.human_name} <span data-unread={room.unread} className="label label-info label-as-badge">{room.unread != 0 ? room.unread : ''}</span>
           </a>

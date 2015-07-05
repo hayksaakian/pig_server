@@ -1,3 +1,5 @@
+var Promise = require('bluebird')
+
 var Pig = function() {
 }
 
@@ -32,9 +34,18 @@ Pig.roll = function(io, game){
     console.log((new Date).getTime(), game.active_player, 'rolled', game.turns[0])
 
     game.emit(io, 'roll_result', game)
-    if(game.turns[0].bust){
-      Pig.between_turns(io)
+    if(!game.turns[0].bust){
+      return
     }
+    game.turns[0].completed = true
+    game.turns[0].save().catch(function (err){
+      console.error(err, 'failed to set busted turn as completed')
+    }).then(function (turn){
+      // return io.models.game.refetch(turn.game.id)
+      return io.models.game.refetch(game.id)
+    }).then(function (game){
+      Pig.between_turns(io, game)    
+    })
   })
 },
 
@@ -48,7 +59,19 @@ Pig.hold = function(io, game){
   }
 
   game.emit(io, 'hold_result', game)
-  Pig.between_turns(io, game)
+
+  turn.completed = true
+  turn.save().catch(function (err){
+    console.error(err, 'failed to set held turn as completed')
+  }).then(function (turn){
+    return game.save()
+  }).catch(function (err){
+    console.error(err, 'failed to save player total')
+  }).then(function (game){
+    return io.models.game.refetch(game.id)
+  }).then(function (game){
+    Pig.between_turns(io, game)    
+  })
 },
 
 Pig.between_turns = function(io, game){
@@ -58,6 +81,7 @@ Pig.between_turns = function(io, game){
   }else if (game.active_player == game.player2.id){
     total = game.totals_player2
   }
+  console.log('win? total:', total, 'SCORE_TO_WIN:', Pig.SCORE_TO_WIN)
   if(total >= Pig.SCORE_TO_WIN){
     game.declare_winner(io, game.active_player)
     return
