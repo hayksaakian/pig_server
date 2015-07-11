@@ -52,7 +52,7 @@ var MatchmakingView = React.createClass({
   componentDidMount: function(){
     socket.on('matchmaking_list', function (list){
       this.setState({users: list})
-    })
+    }.bind(this))
   },
   render: function () {
     if(!this.state.users || this.state.users.length == 0){
@@ -86,6 +86,14 @@ var Main = React.createClass({
     socket.emit('search_for_match')
     this.setState({disabled: true})
   },
+  handleClose: function (game_id) {
+    this.setState(function (previousState){
+      previousState.matchmaking_button_text = "Search for another Game"
+      previousState.disabled = false
+      delete previousState.games[game_id]
+      return previousState
+    })
+  },
   ensureGame: function (g){
     console.log('ensuring a game!', g)
     // console.log('create_game', g)
@@ -112,7 +120,7 @@ var Main = React.createClass({
         <MatchmakingView />
         <div id="games_view">
           <h3>Games</h3>
-          <GameContainer games={this.state.games} user={this.props.user} />
+          <GameContainer games={this.state.games} user={this.props.user} handleClose={this.handleClose} />
           <hr />
           <button onClick={this.search_for_match} disabled={this.state.disabled} className="btn btn-success navbar-btn" id="search_for_match">
             {this.state.matchmaking_button_text}
@@ -129,9 +137,14 @@ var GameContainer = React.createClass({
       var game = this.props.games[gameid]
       console.log('rendering a game:', game)
       return (
-        <Game game={game} user={this.props.user}/>
+        <Game game={game} user={this.props.user} handleClose={this.props.handleClose} />
       )
     }.bind(this))
+
+    if(gameNodes.length == 0){
+      return <div id="games"><h4>Join Matchmaking to Find a Game</h4></div>
+    }
+
     return (
       <div id="games">
         {gameNodes}
@@ -151,13 +164,24 @@ var Game = React.createClass({
   render: function(){
     var board = React.createElement(BoardKinds[this.props.game.kind], {game: this.props.game, user: this.props.user, sendAction: this.sendAction})
 
+    var winner = ""
+    if(this.props.game.winner){
+      winner = <h4>{this.props.game.winner.name} wins the game!</h4>
+    }
+
+    var closebtn = ""
+    if(!this.props.game.active){
+      closebtn = <button onClick={this.props.handleClose.bind(null, this.props.game.id)} className='btn btn-warning closebtn' type='button'>Close this Game and related Chat</button>
+    }
 
     return (
       <div className="game" id={this.props.game.id}>
         <h4>Game: {this.props.game.id}</h4>
+        {winner}
         <div className="gameinfo">
           {board}
         </div>
+        {closebtn}
       </div>
     )
   }

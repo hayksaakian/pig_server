@@ -208,6 +208,7 @@ io.on('connection', function (socket) {
         cleanup_potential_gameroom(roomname, user_id)
       }
     })
+    syncMatchmakers()
     Object.getPrototypeOf(this).onclose.call(this,reason);
   }
 
@@ -321,7 +322,7 @@ function syncMatchmakers () {
     id: user_ids
   }).then(function (users){
     console.log('in matchmaking:', users)
-    io.to('matchmaking').emit('matchmaking_list', users)
+    io.emit('matchmaking_list', users)
   })
 }
 
@@ -363,6 +364,7 @@ function pay_attention(socket){
       cleanup_potential_gameroom(roomname, user_id)
     }
     socket.leave(roomname)
+    socket.emit('left_room', roomname)
   })
 }
 

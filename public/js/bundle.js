@@ -98,7 +98,7 @@
 	  componentDidMount: function(){
 	    socket.on('matchmaking_list', function (list){
 	      this.setState({users: list})
-	    })
+	    }.bind(this))
 	  },
 	  render: function () {
 	    if(!this.state.users || this.state.users.length == 0){
@@ -132,6 +132,14 @@
 	    socket.emit('search_for_match')
 	    this.setState({disabled: true})
 	  },
+	  handleClose: function (game_id) {
+	    this.setState(function (previousState){
+	      previousState.matchmaking_button_text = "Search for another Game"
+	      previousState.disabled = false
+	      delete previousState.games[game_id]
+	      return previousState
+	    })
+	  },
 	  ensureGame: function (g){
 	    console.log('ensuring a game!', g)
 	    // console.log('create_game', g)
@@ -158,7 +166,7 @@
 	        React.createElement(MatchmakingView, null), 
 	        React.createElement("div", {id: "games_view"}, 
 	          React.createElement("h3", null, "Games"), 
-	          React.createElement(GameContainer, {games: this.state.games, user: this.props.user}), 
+	          React.createElement(GameContainer, {games: this.state.games, user: this.props.user, handleClose: this.handleClose}), 
 	          React.createElement("hr", null), 
 	          React.createElement("button", {onClick: this.search_for_match, disabled: this.state.disabled, className: "btn btn-success navbar-btn", id: "search_for_match"}, 
 	            this.state.matchmaking_button_text
@@ -175,9 +183,14 @@
 	      var game = this.props.games[gameid]
 	      console.log('rendering a game:', game)
 	      return (
-	        React.createElement(Game, {game: game, user: this.props.user})
+	        React.createElement(Game, {game: game, user: this.props.user, handleClose: this.props.handleClose})
 	      )
 	    }.bind(this))
+
+	    if(gameNodes.length == 0){
+	      return React.createElement("div", {id: "games"}, React.createElement("h4", null, "Join Matchmaking to Find a Game"))
+	    }
+
 	    return (
 	      React.createElement("div", {id: "games"}, 
 	        gameNodes
@@ -187,7 +200,7 @@
 	})
 
 	var BoardKinds = {
-	  "Pig": __webpack_require__(251)
+	  "Pig": __webpack_require__(250)
 	}
 
 	var Game = React.createClass({displayName: "Game",
@@ -197,13 +210,24 @@
 	  render: function(){
 	    var board = React.createElement(BoardKinds[this.props.game.kind], {game: this.props.game, user: this.props.user, sendAction: this.sendAction})
 
+	    var winner = ""
+	    if(this.props.game.winner){
+	      winner = React.createElement("h4", null, this.props.game.winner.name, " wins the game!")
+	    }
+
+	    var closebtn = ""
+	    if(!this.props.game.active){
+	      closebtn = React.createElement("button", {onClick: this.props.handleClose.bind(null, this.props.game.id), className: "btn btn-warning closebtn", type: "button"}, "Close this Game and related Chat")
+	    }
 
 	    return (
 	      React.createElement("div", {className: "game", id: this.props.game.id}, 
 	        React.createElement("h4", null, "Game: ", this.props.game.id), 
+	        winner, 
 	        React.createElement("div", {className: "gameinfo"}, 
 	          board
-	        )
+	        ), 
+	        closebtn
 	      )
 	    )
 	  }
@@ -32768,8 +32792,7 @@
 
 
 /***/ },
-/* 250 */,
-/* 251 */
+/* 250 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var React = __webpack_require__(1);
